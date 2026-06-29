@@ -130,6 +130,7 @@ export function parseClientMessage(raw: string): ParseResult {
     case 'register': {
       if (!isRid(v.rid)) return MALFORMED;
       if (!isKeyB64(v.identityKey)) return MALFORMED;
+      if (!isKeyB64(v.authKey)) return MALFORMED;
       if (!isUint(v.registrationId)) return MALFORMED;
       if (!isUint(v.deviceId)) return MALFORMED;
       if (!isPushRegistration(v.push)) return MALFORMED;
@@ -139,6 +140,7 @@ export function parseClientMessage(raw: string): ParseResult {
           type: 'register',
           rid: v.rid,
           identityKey: v.identityKey,
+          authKey: v.authKey,
           registrationId: v.registrationId,
           deviceId: v.deviceId,
           push: v.push,

@@ -51,7 +51,8 @@ export interface AuthenticateMsg {
 export interface RegisterMsg {
   readonly type: 'register';
   readonly rid: string;
-  readonly identityKey: string; // base64 public identity key
+  readonly identityKey: string; // base64 public identity key (the E2EE trust anchor)
+  readonly authKey: string; // base64 Ed25519 public key used to authenticate the socket
   readonly registrationId: number;
   readonly deviceId: number;
   readonly push: PushRegistration;

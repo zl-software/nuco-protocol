@@ -40,12 +40,18 @@ encodes a private key.
    PROTOCOL_VERSION_MISMATCH and closes. Otherwise it replies `connected` with its own
    version and a random base64 challenge nonce.
 3. If the handle is new, the client sends `register` first (see below) so the relay knows
-   the identity key. The client then signs the nonce with its identity private key and
-   sends `authenticate` with the base64 signature.
-4. Relay verifies the signature against the registered identity public key for the handle
-   and replies `authenticated`. The socket is now bound to the handle and will receive
-   `deliver` frames. A bad signature yields AUTH_FAILED; authenticating an unregistered
-   handle yields NOT_REGISTERED.
+   the transport auth key. The client then signs the nonce with its Ed25519 transport auth
+   private key and sends `authenticate` with the base64 signature.
+4. Relay verifies the signature against the registered transport auth public key for the
+   handle and replies `authenticated`. The socket is now bound to the handle and will
+   receive `deliver` frames. A bad signature yields AUTH_FAILED; authenticating an
+   unregistered handle yields NOT_REGISTERED.
+
+The transport auth key is a dedicated Ed25519 key pair, separate from the Signal identity
+key. It exists only so the relay can bind a socket to its handle (which stops a third party
+from draining a handle's queue) using a standard signature the relay can verify without any
+Signal specific crypto. The identity key remains the end to end trust anchor that peers
+verify in person; the relay never needs to verify anything about the identity key.
 
 Operations below require an authenticated socket, except `register` for a brand new handle
 which is allowed before authentication (trust on first use for the random handle
@@ -58,8 +64,9 @@ person).
 - `authenticate`: prove control of the identity key. Fields: signature (base64 over the
   challenge nonce).
 - `register`: create or update a device record. Fields: rid, identityKey (base64 public),
-  registrationId, deviceId, push (kind plus opaque token or endpoint plus apnsTopic).
-  Updating an existing handle requires an authenticated socket. Replies `ok`.
+  authKey (base64 Ed25519 public, used to authenticate the socket), registrationId,
+  deviceId, push (kind plus opaque token or endpoint plus apnsTopic). Updating an existing
+  handle requires an authenticated socket. Replies `ok`.
 - `publishPreKeys`: upload a signed prekey and a batch of one time prekeys. Fields: rid,
   preKeys. Replies `ok` with the remaining one time count in data.
 - `fetchPreKeyBundle`: fetch a bundle for a handle. Fields: rid, handle. The relay pops one
