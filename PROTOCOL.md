@@ -4,11 +4,12 @@ This document and the typed sources in `src/` are the single source of truth for
 the Nuco app and the Nuco relay talk. The drift checker (`npm run check`) fails if this
 document falls out of sync with the types.
 
-Protocol version: 1.0
+Protocol version: 1.1
 
 The version is `major.minor`. The relay rejects any connection whose MAJOR version does
 not match its own. A higher MINOR is backward compatible: unknown optional fields are
-ignored.
+ignored. Minor 1 added the message content layer (see "Message content"), which is invisible
+to the relay.
 
 ## Trust model in one paragraph
 
@@ -102,6 +103,17 @@ plaintext is padded to one of the buckets 256, 1024, 4096, 16384, or 65536 bytes
 above the largest bucket round up to a whole multiple of it) before encryption, using a 4
 byte big endian length prefix so the receiver can recover the exact plaintext after
 decryption.
+
+## Message content
+
+The plaintext inside an envelope is a typed content object, JSON encoded, so peers can carry
+control messages alongside text on the same sealed channel. The relay never sees any of this.
+Variants: `text` (a message body), `retention/request` (request a disappearing message timer
+of `value` seconds, 0 = off), `retention/accept` (accept a pending request of `value`), and
+`retention/cancel` (the requester cancels, or the recipient declines, a pending request).
+Decoding is tolerant: bytes that are not a recognized content object are treated as a raw text
+body, so an unknown future variant degrades to text rather than being dropped. Adding a variant
+is a backward compatible (minor) change.
 
 ## Delivery semantics
 
