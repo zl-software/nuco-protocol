@@ -115,6 +115,11 @@ Decoding is tolerant: bytes that are not a recognized content object are treated
 body, so an unknown future variant degrades to text rather than being dropped. Adding a variant
 is a backward compatible (minor) change.
 
+On decode the receiver bounds two fields so a hostile peer cannot force unbounded storage or
+overflow expiry math: a `text` body is capped at 16384 units (longer bodies are truncated),
+and a retention `value` above 365 days (31536000 seconds) is not recognized as a control
+message.
+
 ## Delivery semantics
 
 The relay stores sealed messages per recipient with a queue size cap and a time to live.

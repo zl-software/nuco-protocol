@@ -48,8 +48,15 @@ export const LIMITS = {
 function isHandle(v: unknown): v is string {
   return isNonEmptyStr(v) && v.length <= LIMITS.handleMaxLen;
 }
+// Standard base64 with padding, exactly what the client's encoder emits (length a multiple
+// of 4, only the base64 alphabet, at most two trailing '='). Rejecting malformed base64 at
+// the trust boundary stops garbage key material from being stored and later handed to peers.
+const BASE64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
+function isBase64(v: string): boolean {
+  return v.length % 4 === 0 && BASE64_RE.test(v);
+}
 function isKeyB64(v: unknown): v is string {
-  return isNonEmptyStr(v) && v.length <= LIMITS.keyB64MaxLen;
+  return isNonEmptyStr(v) && v.length <= LIMITS.keyB64MaxLen && isBase64(v);
 }
 
 function isSignedPreKey(v: unknown): v is SignedPreKeyPublic {

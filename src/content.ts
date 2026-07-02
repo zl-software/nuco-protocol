@@ -30,6 +30,14 @@ export type MessageContent =
 
 export type MessageContentType = MessageContent['t'];
 
+// Bounds enforced on decode so a malicious or buggy peer cannot make the receiver store or
+// render an unbounded body, nor set a retention so large that expiry arithmetic overflows.
+// A text body of up to 16384 UTF-16 units always fits within the largest padding bucket
+// (65536 bytes) even at the 4 byte per unit worst case. The retention ceiling (365 days)
+// covers every offered option while keeping now + value*1000 far below MAX_SAFE_INTEGER.
+export const MESSAGE_BODY_MAX_LEN = 16384;
+export const RETENTION_MAX_SECONDS = 365 * 24 * 60 * 60;
+
 // Force exhaustiveness: adding a variant without listing it here is a type error.
 const MESSAGE_CONTENT_TYPE_MAP: Record<MessageContentType, true> = {
   text: true,
@@ -56,7 +64,7 @@ export function decodeContent(bytes: Uint8Array): MessageContent {
     return { t: 'text', body: text };
   }
   if (isMessageContent(parsed)) return parsed;
-  return { t: 'text', body: text };
+  return { t: 'text', body: text.slice(0, MESSAGE_BODY_MAX_LEN) };
 }
 
 function isMessageContent(v: unknown): v is MessageContent {
@@ -64,10 +72,15 @@ function isMessageContent(v: unknown): v is MessageContent {
   const o = v as Record<string, unknown>;
   switch (o.t) {
     case 'text':
-      return typeof o.body === 'string';
+      return typeof o.body === 'string' && o.body.length <= MESSAGE_BODY_MAX_LEN;
     case 'retention/request':
     case 'retention/accept':
-      return typeof o.value === 'number' && Number.isFinite(o.value) && o.value >= 0;
+      return (
+        typeof o.value === 'number' &&
+        Number.isFinite(o.value) &&
+        o.value >= 0 &&
+        o.value <= RETENTION_MAX_SECONDS
+      );
     case 'retention/cancel':
       return true;
     default:
