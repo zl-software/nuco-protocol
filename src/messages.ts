@@ -92,6 +92,13 @@ export interface PingMsg {
   readonly ts: number;
 }
 
+// Delete this account and all of its server side data (device record, prekey bundles, queued
+// messages). Requires an authenticated socket. Used for in app account deletion.
+export interface DeregisterMsg {
+  readonly type: 'deregister';
+  readonly rid: string;
+}
+
 export type ClientMessage =
   | ConnectMsg
   | AuthenticateMsg
@@ -101,7 +108,8 @@ export type ClientMessage =
   | PreKeyCountMsg
   | SendMsg
   | AckMsg
-  | PingMsg;
+  | PingMsg
+  | DeregisterMsg;
 
 export type ClientMessageType = ClientMessage['type'];
 
@@ -187,6 +195,7 @@ const CLIENT_MESSAGE_TYPE_MAP: Record<ClientMessageType, true> = {
   send: true,
   ack: true,
   ping: true,
+  deregister: true,
 };
 
 const SERVER_MESSAGE_TYPE_MAP: Record<ServerMessageType, true> = {

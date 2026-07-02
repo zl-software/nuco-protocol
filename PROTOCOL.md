@@ -4,12 +4,12 @@ This document and the typed sources in `src/` are the single source of truth for
 the Nuco app and the Nuco relay talk. The drift checker (`npm run check`) fails if this
 document falls out of sync with the types.
 
-Protocol version: 1.1
+Protocol version: 1.2
 
 The version is `major.minor`. The relay rejects any connection whose MAJOR version does
 not match its own. A higher MINOR is backward compatible: unknown optional fields are
 ignored. Minor 1 added the message content layer (see "Message content"), which is invisible
-to the relay.
+to the relay. Minor 2 added the `deregister` client message for account deletion.
 
 ## Trust model in one paragraph
 
@@ -82,6 +82,8 @@ person).
 - `ack`: confirm a delivered message has been durably stored. Fields: id. The relay then
   deletes that queued message.
 - `ping`: heartbeat. Fields: ts. Replies `pong`.
+- `deregister`: delete this account and all of its server side data (device record, prekey
+  bundles, queued messages). Fields: rid. Requires an authenticated socket. Replies `ok`.
 
 ## Server to client messages
 
