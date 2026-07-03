@@ -46,15 +46,17 @@ export const RETENTION_MAX_SECONDS = 365 * 24 * 60 * 60;
 // an audio only, relay only offer or answer (roughly 1 to 3 KB, which pads into the 4096
 // bucket). Both sides time the ring against CALL_RING_TIMEOUT_SECONDS; the caller MUST send
 // `call/end` with reason `timeout` when it fires, so a queued offer is always followed by an
-// authoritative end marker. The staleness window is deliberately wider than the ring timeout
-// so an honest but skewed sender clock cannot suppress a legitimate ring: a receiver rings
-// only if localReceiveTime - envelope.sentAt < CALL_OFFER_STALE_SECONDS * 1000, and treats
-// an older offer as a missed call (no ring, no reply).
+// authoritative end marker. A receiver rings only if localReceiveTime - envelope.sentAt <
+// CALL_OFFER_STALE_SECONDS * 1000 and treats an older offer as a missed call (no ring, no
+// reply). The window tolerates sender clocks up to (window - ring timeout - delivery delay)
+// behind before rings start being suppressed (75s of skew at these values); a wider window
+// costs little because late ghost rings are already bounded by the caller's trailing end
+// marker (delivered in order right behind the offer) and the callee's own local ring timer.
 export const CALL_ID_MAX_LEN = 64;
 export const CALL_SDP_MAX_LEN = 8192;
 export const CALL_END_REASON_MAX_LEN = 32;
 export const CALL_RING_TIMEOUT_SECONDS = 45;
-export const CALL_OFFER_STALE_SECONDS = 60;
+export const CALL_OFFER_STALE_SECONDS = 120;
 
 // Known call end reasons. The wire field stays an open short string so a reason added in a
 // future minor still ends the call on an older peer instead of ringing through the timeout.

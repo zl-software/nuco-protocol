@@ -8,11 +8,15 @@ Protocol version: 1.3
 
 The version is `major.minor`. The relay rejects any connection whose MAJOR version does
 not match its own. A higher MINOR is backward compatible: unknown optional fields are
-ignored. Minor 1 added the message content layer (see "Message content"), which is invisible
+ignored, but a relay answers a frame TYPE it does not know with MALFORMED_MESSAGE (and no
+rid), so a client MUST NOT send frames newer than the minor the relay advertises in its
+`connected` reply; that advertised minor exists exactly for this feature negotiation.
+Minor 1 added the message content layer (see "Message content"), which is invisible
 to the relay. Minor 2 added the `deregister` client message for account deletion. Minor 3
 added voice call signaling content (`call/offer`, `call/answer`, `call/end`), the
 `turnCredentials` and `turnCredentialsResult` frames for short lived TURN credentials, the
 CALLS_UNAVAILABLE error code, and the structured unknown decode rule (see "Message content").
+Clients treat a relay older than minor 3 as calls unavailable.
 
 ## Trust model in one paragraph
 
@@ -155,12 +159,16 @@ in the 4096 bucket).
   gives up, it MUST send `call/end` with reason `timeout`: that queued end marker is what
   converts an undelivered offer into a missed call for an offline recipient.
 - Staleness. Offers are queued and redelivered at least once, so a receiver rings only if
-  localReceiveTime - envelope.sentAt < CALL_OFFER_STALE_SECONDS (60) * 1000. The local
+  localReceiveTime - envelope.sentAt < CALL_OFFER_STALE_SECONDS (120) * 1000. The local
   receive time is the trust anchor; `sentAt` is the sender's clock and only ages the offer.
   A stale offer becomes a missed call: no ring, no reply, and the envelope is still acked.
-  The staleness window is wider than the ring timeout so an honest but skewed sender clock
-  cannot suppress a ring; a lying clock can at worst make the phone ring, which any caller
-  can do anyway.
+  The window is deliberately much wider than the ring timeout: it tolerates sender clocks
+  up to (window - ring timeout - delivery delay) behind, roughly 75 seconds at these
+  values, before that sender's calls stop ringing on the receiver (they surface as missed
+  calls instead). A wider window is cheap because late ghost rings are already bounded by
+  the caller's trailing `call/end` marker (delivered in order right behind the offer) and
+  by the callee's own local ring timer. A lying clock can at worst make the phone ring,
+  which any caller can do anyway.
 - End reasons: `hangup` (normal end, also caller cancel before answer), `decline` (callee
   rejected), `busy` (callee already in a call), `timeout` (caller gave up unanswered),
   `error` (setup or media failure). Receivers treat an unrecognized reason like a generic
