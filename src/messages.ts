@@ -99,6 +99,13 @@ export interface DeregisterMsg {
   readonly rid: string;
 }
 
+// Request short lived TURN relay credentials for a voice call. Requires an authenticated
+// socket. A relay without TURN configured replies with error CALLS_UNAVAILABLE.
+export interface TurnCredentialsMsg {
+  readonly type: 'turnCredentials';
+  readonly rid: string;
+}
+
 export type ClientMessage =
   | ConnectMsg
   | AuthenticateMsg
@@ -109,7 +116,8 @@ export type ClientMessage =
   | SendMsg
   | AckMsg
   | PingMsg
-  | DeregisterMsg;
+  | DeregisterMsg
+  | TurnCredentialsMsg;
 
 export type ClientMessageType = ClientMessage['type'];
 
@@ -148,6 +156,18 @@ export interface PreKeyCountResultMsg {
   readonly oneTimeCount: number;
 }
 
+// TURN REST API credentials (the scheme coturn implements with use-auth-secret): the
+// username embeds a unix expiry, the credential is an HMAC over the username that the TURN
+// server verifies against a shared secret. Derived per request, never stored, never logged.
+export interface TurnCredentialsResultMsg {
+  readonly type: 'turnCredentialsResult';
+  readonly rid: string;
+  readonly urls: readonly string[]; // e.g. ['turn:turn.example.org:3478?transport=udp']
+  readonly username: string; // '<unixExpirySeconds>:<ephemeralId>'
+  readonly credential: string; // base64 HMAC-SHA1 over the username
+  readonly expiresAt: number; // unix seconds, equals the expiry inside username
+}
+
 // A queued or live message pushed to a connected recipient. The client acks by id.
 export interface DeliverMsg {
   readonly type: 'deliver';
@@ -173,6 +193,7 @@ export type ServerMessage =
   | OkMsg
   | PreKeyBundleMsg
   | PreKeyCountResultMsg
+  | TurnCredentialsResultMsg
   | DeliverMsg
   | ErrorMsg
   | PongMsg;
@@ -196,6 +217,7 @@ const CLIENT_MESSAGE_TYPE_MAP: Record<ClientMessageType, true> = {
   ack: true,
   ping: true,
   deregister: true,
+  turnCredentials: true,
 };
 
 const SERVER_MESSAGE_TYPE_MAP: Record<ServerMessageType, true> = {
@@ -204,6 +226,7 @@ const SERVER_MESSAGE_TYPE_MAP: Record<ServerMessageType, true> = {
   ok: true,
   preKeyBundle: true,
   preKeyCountResult: true,
+  turnCredentialsResult: true,
   deliver: true,
   error: true,
   pong: true,

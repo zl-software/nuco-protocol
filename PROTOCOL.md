@@ -87,6 +87,9 @@ person).
 - `ping`: heartbeat. Fields: ts. Replies `pong`.
 - `deregister`: delete this account and all of its server side data (device record, prekey
   bundles, queued messages). Fields: rid. Requires an authenticated socket. Replies `ok`.
+- `turnCredentials`: request short lived TURN relay credentials for a voice call. Fields:
+  rid. Requires an authenticated socket. Replies `turnCredentialsResult`; a relay without
+  TURN configured replies error CALLS_UNAVAILABLE.
 
 ## Server to client messages
 
@@ -95,6 +98,9 @@ person).
 - `ok`: generic success for a request. Fields: rid, optional data.
 - `preKeyBundle`: a fetched bundle. Fields: rid, bundle.
 - `preKeyCountResult`: remaining keys. Fields: rid, hasSignedPreKey, oneTimeCount.
+- `turnCredentialsResult`: short lived TURN credentials (TURN REST scheme). Fields: rid,
+  urls, username (embeds a unix expiry), credential (base64 HMAC over the username),
+  expiresAt (unix seconds). Derived per request, never stored server side.
 - `deliver`: a queued or live message for this recipient. Fields: from, envelope, seq.
   Delivery is at least once; clients dedupe by envelope id and ack by id.
 - `error`: a stable machine error code. Fields: code, optional rid.
@@ -220,6 +226,7 @@ app maps to a localized string:
 - RATE_LIMITED: the client exceeded a rate or abuse limit.
 - QUEUE_FULL: the recipient queue is at capacity.
 - MESSAGE_TOO_LARGE: the envelope exceeded the maximum allowed size.
+- CALLS_UNAVAILABLE: the relay has no TURN server configured, so voice calls cannot connect.
 - INTERNAL: an unexpected relay error.
 
 ## What the relay can and cannot see

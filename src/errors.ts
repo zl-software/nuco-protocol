@@ -12,6 +12,7 @@ export enum ErrorCode {
   RateLimited = 'RATE_LIMITED',
   QueueFull = 'QUEUE_FULL',
   MessageTooLarge = 'MESSAGE_TOO_LARGE',
+  CallsUnavailable = 'CALLS_UNAVAILABLE',
   Internal = 'INTERNAL',
 }
 

@@ -186,6 +186,10 @@ export function parseClientMessage(raw: string): ParseResult {
       if (!isRid(v.rid)) return MALFORMED;
       return { ok: true, message: { type: 'deregister', rid: v.rid } };
     }
+    case 'turnCredentials': {
+      if (!isRid(v.rid)) return MALFORMED;
+      return { ok: true, message: { type: 'turnCredentials', rid: v.rid } };
+    }
     default:
       return MALFORMED;
   }
