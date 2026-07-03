@@ -4,7 +4,7 @@ This document and the typed sources in `src/` are the single source of truth for
 the Nuco app and the Nuco relay talk. The drift checker (`npm run check`) fails if this
 document falls out of sync with the types.
 
-Protocol version: 1.3
+Protocol version: 1.4
 
 The version is `major.minor`. The relay rejects any connection whose MAJOR version does
 not match its own. A higher MINOR is backward compatible: unknown optional fields are
@@ -16,7 +16,9 @@ to the relay. Minor 2 added the `deregister` client message for account deletion
 added voice call signaling content (`call/offer`, `call/answer`, `call/end`), the
 `turnCredentials` and `turnCredentialsResult` frames for short lived TURN credentials, the
 CALLS_UNAVAILABLE error code, and the structured unknown decode rule (see "Message content").
-Clients treat a relay older than minor 3 as calls unavailable.
+Clients treat a relay older than minor 3 as calls unavailable. Minor 4 added two transport
+conventions for edge hosted relays (see "Transport"): the client repeats its handle in the
+WebSocket URL query, and the heartbeat ping carries a constant payload.
 
 ## Trust model in one paragraph
 
@@ -25,13 +27,25 @@ and a padded size bucket). It never sees plaintext and never holds a private key
 content encryption (Signal Protocol: X3DH plus Double Ratchet) happens on the device.
 Clients pad every plaintext to a fixed size bucket before sealing it, so the relay learns
 only a coarse size. The metadata that remains visible to the relay (handles in contact,
-timing, and the size bucket) is documented here and surfaced honestly in the app.
+timing, and the size bucket) is documented here and surfaced honestly in the app. The
+reference relay runs on Cloudflare Workers, so that metadata (plus client IPs and, for
+calls, TURN allocation timing and volume) is visible to Cloudflare as the infrastructure
+operator; the sealed content and the DTLS-SRTP call media remain unreadable to it. Self
+hosting means deploying the relay on your own Cloudflare account.
 
 ## Transport
 
 A single WebSocket per device carries JSON text frames. Binary values (public keys,
 signatures, ciphertext) are base64 strings inside the JSON. Requests that expect a reply
 carry a client generated correlation id `rid`; the matching reply echoes it.
+
+Since minor 4 the client also repeats its handle in the WebSocket URL query
+(`?handle=<handle>`), so an edge hosted relay can route the socket to the handle's mailbox
+before the first frame arrives. The `connect` frame is unchanged and remains authoritative;
+the relay rejects a socket whose frame handle does not match the URL handle. The heartbeat
+`ping` SHOULD carry the constant payload `ts: 0` (identical bytes every time) so a relay
+can answer it without waking a hibernated mailbox; the `pong` echoes it. Relays accept any
+integer `ts` for compatibility.
 
 ## Identity and handles
 
