@@ -4,12 +4,15 @@ This document and the typed sources in `src/` are the single source of truth for
 the Nuco app and the Nuco relay talk. The drift checker (`npm run check`) fails if this
 document falls out of sync with the types.
 
-Protocol version: 1.2
+Protocol version: 1.3
 
 The version is `major.minor`. The relay rejects any connection whose MAJOR version does
 not match its own. A higher MINOR is backward compatible: unknown optional fields are
 ignored. Minor 1 added the message content layer (see "Message content"), which is invisible
-to the relay. Minor 2 added the `deregister` client message for account deletion.
+to the relay. Minor 2 added the `deregister` client message for account deletion. Minor 3
+added voice call signaling content (`call/offer`, `call/answer`, `call/end`), the
+`turnCredentials` and `turnCredentialsResult` frames for short lived TURN credentials, the
+CALLS_UNAVAILABLE error code, and the structured unknown decode rule (see "Message content").
 
 ## Trust model in one paragraph
 
@@ -111,16 +114,88 @@ decryption.
 The plaintext inside an envelope is a typed content object, JSON encoded, so peers can carry
 control messages alongside text on the same sealed channel. The relay never sees any of this.
 Variants: `text` (a message body), `retention/request` (request a disappearing message timer
-of `value` seconds, 0 = off), `retention/accept` (accept a pending request of `value`), and
-`retention/cancel` (the requester cancels, or the recipient declines, a pending request).
-Decoding is tolerant: bytes that are not a recognized content object are treated as a raw text
-body, so an unknown future variant degrades to text rather than being dropped. Adding a variant
-is a backward compatible (minor) change.
+of `value` seconds, 0 = off), `retention/accept` (accept a pending request of `value`),
+`retention/cancel` (the requester cancels, or the recipient declines, a pending request),
+`call/offer` (start a voice call: callId plus a complete SDP offer), `call/answer` (accept a
+pending offer: the same callId plus a complete SDP answer), and `call/end` (end, decline, or
+abort the call with that callId, with a short `reason` string).
 
-On decode the receiver bounds two fields so a hostile peer cannot force unbounded storage or
-overflow expiry math: a `text` body is capped at 16384 units (longer bodies are truncated),
-and a retention `value` above 365 days (31536000 seconds) is not recognized as a control
-message.
+Decoding is tolerant: unstructured bytes (plain text, malformed JSON) are treated as a raw
+text body, so a nonconforming but honest peer still renders as a message. A structured
+object whose `t` is not recognized decodes as a local `unknown` sentinel instead, and the
+receiver drops it silently; this keeps control payloads from a newer minor from rendering
+as raw JSON text. (Clients on minor 2 or older predate this rule and render unknown
+structured content as text; there is no peer capability discovery, so callers should expect
+that limitation against old clients.) Adding a variant is a backward compatible (minor)
+change.
+
+On decode the receiver bounds every field so a hostile peer cannot force unbounded storage
+or overflow expiry math: a `text` body is capped at 16384 units (longer bodies are
+truncated), a retention `value` above 365 days (31536000 seconds) is not recognized, a call
+id is capped at 64 units, an SDP payload at 8192 units, and a call end reason at 32 units.
+
+### Call signaling semantics
+
+Call setup is plain content on the sealed channel; the relay cannot distinguish it from
+ordinary messages beyond the usual padded size bucket (an audio only offer or answer lands
+in the 4096 bucket).
+
+- No trickle ICE. With relay only ICE (see "Voice calls"), candidate gathering is a single
+  TURN allocation round trip, so each side sends one complete SDP after gathering finishes.
+  Trickled candidates over an at least once, store and forward channel would add ordering
+  and staleness complexity for no practical gain. A `call/ice` variant can be added in a
+  future minor if ever needed.
+- Ring timeout. Both sides ring for at most CALL_RING_TIMEOUT_SECONDS (45). When the caller
+  gives up, it MUST send `call/end` with reason `timeout`: that queued end marker is what
+  converts an undelivered offer into a missed call for an offline recipient.
+- Staleness. Offers are queued and redelivered at least once, so a receiver rings only if
+  localReceiveTime - envelope.sentAt < CALL_OFFER_STALE_SECONDS (60) * 1000. The local
+  receive time is the trust anchor; `sentAt` is the sender's clock and only ages the offer.
+  A stale offer becomes a missed call: no ring, no reply, and the envelope is still acked.
+  The staleness window is wider than the ring timeout so an honest but skewed sender clock
+  cannot suppress a ring; a lying clock can at worst make the phone ring, which any caller
+  can do anyway.
+- End reasons: `hangup` (normal end, also caller cancel before answer), `decline` (callee
+  rejected), `busy` (callee already in a call), `timeout` (caller gave up unanswered),
+  `error` (setup or media failure). Receivers treat an unrecognized reason like a generic
+  end so future reasons still stop the ring.
+- Glare. When both peers send each other offers concurrently, the offer with the smaller
+  callId (plain code unit comparison, see `callOfferWins`) wins on both sides; the loser
+  silently abandons its own offer and answers the winner. No extra round trip, no signal
+  for the abandoned offer.
+- A `call/answer` for a callId the caller no longer has active is ignored (the caller's
+  earlier queued `call/end` already tells the callee why).
+
+## Voice calls
+
+Call media is WebRTC audio between exactly two devices, encrypted with DTLS-SRTP. The
+signaling (offer, answer, end) rides the sealed Signal channel as ordinary message content,
+so the DTLS certificate fingerprints (`a=fingerprint` in the SDP) are exchanged end to end
+encrypted and authenticated by the Signal session. A relay or TURN operator cannot man in
+the middle the media without first breaking the Signal channel, so call authenticity
+inherits the messaging trust anchor (the identity key, verifiable in person via the safety
+number); no separate in call verification string is needed. The self signed DTLS
+certificates visible to a wire observer carry no identity beyond a fresh random key.
+
+Media is always routed through the operator's TURN server: clients force relay only ICE
+candidates, so neither peer learns the other's IP address. The client fetches short lived
+TURN credentials from the relay with `turnCredentials` (TURN REST scheme: the username
+embeds a unix expiry, the password is an HMAC the TURN server verifies against a shared
+secret; nothing is stored server side, and the credential TTL caps how long an established
+call can refresh its allocation). A relay without TURN configured answers
+CALLS_UNAVAILABLE and the app disables calling.
+
+What the operators see: the TURN server sees both endpoints' IP addresses (by design,
+instead of the peers seeing each other's), allocation times, duration, and byte counts; the
+payload it forwards is SRTP ciphertext. The relay can infer that a call attempt happened
+(a characteristic burst of sealed messages correlated in time with TURN allocations). This
+is the same class of exposure as the existing messaging metadata (who talks to whom, and
+when), extended by call duration.
+
+An offline callee gets the normal content free push wake; the queued offer converts into a
+missed call after the ring timeout (see "Call signaling semantics"), never a late ring.
+While the app is locked, envelopes stay queued unacked, so a call placed during lock
+surfaces as a missed call after unlock.
 
 ## Delivery semantics
 
