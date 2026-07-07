@@ -4,21 +4,26 @@ This document and the typed sources in `src/` are the single source of truth for
 the Nuco app and the Nuco relay talk. The drift checker (`npm run check`) fails if this
 document falls out of sync with the types.
 
-Protocol version: 1.4
+Protocol version: 2.0
 
 The version is `major.minor`. The relay rejects any connection whose MAJOR version does
 not match its own. A higher MINOR is backward compatible: unknown optional fields are
 ignored, but a relay answers a frame TYPE it does not know with MALFORMED_MESSAGE (and no
 rid), so a client MUST NOT send frames newer than the minor the relay advertises in its
 `connected` reply; that advertised minor exists exactly for this feature negotiation.
-Minor 1 added the message content layer (see "Message content"), which is invisible
-to the relay. Minor 2 added the `deregister` client message for account deletion. Minor 3
-added voice call signaling content (`call/offer`, `call/answer`, `call/end`), the
-`turnCredentials` and `turnCredentialsResult` frames for short lived TURN credentials, the
-CALLS_UNAVAILABLE error code, and the structured unknown decode rule (see "Message content").
-Clients treat a relay older than minor 3 as calls unavailable. Minor 4 added two transport
-conventions for edge hosted relays (see "Transport"): the client repeats its handle in the
-WebSocket URL query, and the heartbeat ping carries a constant payload.
+
+Major 2 is a breaking cut. The relay stores and serves no prekeys: the `publishPreKeys`,
+`fetchPreKeyBundle`, and `preKeyCount` client frames and the `preKeyBundle` and
+`preKeyCountResult` server frames are gone, along with the NO_ONE_TIME_PREKEY error code.
+The signed prekey now travels only inside the QR contact card (v2, see "Identity and
+handles"), so sessions are established fully offline at the scan. `register` no longer
+carries the Signal identity key or registration id; the relay learns nothing about the
+end to end identity. The content layer gained `verify/confirm` and the mutual verification
+rules (see "Mutual verification semantics"): a conversation is usable only after both
+peers scanned each other and confirmed the emoji SAS. The 1.x line for history: minor 1
+added the content layer, minor 2 `deregister`, minor 3 call signaling plus TURN
+credentials plus the structured unknown decode rule, minor 4 the URL handle and constant
+ping transport conventions (both kept in 2.0).
 
 ## Trust model in one paragraph
 
@@ -49,11 +54,21 @@ integer `ts` for compatibility.
 
 ## Identity and handles
 
-Each install generates a long term identity key pair, a registration id, a signed prekey,
-and a batch of one time prekeys. A routing handle is a public, opaque, app generated id
-used only for delivery. The QR contact card encodes public data only: the handle, the
-base64 identity public key, a human readable fingerprint, and a display name. It never
-encodes a private key.
+Each install generates a long term identity key pair, a registration id, and one signed
+prekey. A routing handle is a public, opaque, app generated id used only for delivery. The
+QR contact card (v2) encodes public data only: the handle, the base64 identity public key,
+the registration id, the signed prekey (key id, public key, and its signature by the
+identity key), a human readable fingerprint, and a display name. It never encodes a
+private key.
+
+The card is the ONLY channel that distributes the signed prekey; the relay never stores or
+serves key material beyond the transport auth key. Scanning a card therefore lets the
+scanner run X3DH entirely offline, and possessing a peer's signed prekey proves their card
+was scanned (an initiator's own signed prekey never appears in the X3DH handshake). To
+avoid establishing two racing sessions when both people scan each other, exactly one side
+initiates: the peer whose raw identity key compares byte wise smaller runs X3DH from the
+scanned card; the other side never initiates and becomes the responder when the
+initiator's first sealed message (a `prekey` envelope) arrives.
 
 ## Connection handshake
 
@@ -85,26 +100,18 @@ person).
 - `connect`: open a session. Fields: protocolVersion, handle.
 - `authenticate`: prove control of the identity key. Fields: signature (base64 over the
   challenge nonce).
-- `register`: create or update a device record. Fields: rid, identityKey (base64 public),
-  authKey (base64 Ed25519 public, used to authenticate the socket), registrationId,
-  deviceId, push (kind plus opaque token or endpoint plus apnsTopic). Updating an existing
-  handle requires an authenticated socket. Replies `ok`.
-- `publishPreKeys`: upload a signed prekey and a batch of one time prekeys. Fields: rid,
-  preKeys. Replies `ok` with the remaining one time count in data.
-- `fetchPreKeyBundle`: fetch a bundle for a handle. Fields: rid, handle. The relay pops one
-  one time prekey per fetch and replies `preKeyBundle`. Unknown handle yields NO_SUCH_HANDLE.
-  A bundle may omit the one time prekey when the pool is empty (NO_ONE_TIME_PREKEY is used
-  only when a strict caller requires one).
-- `preKeyCount`: ask how many keys remain so the client can replenish. Fields: rid. Replies
-  `preKeyCountResult`.
+- `register`: create or update a device record. Fields: rid, authKey (base64 Ed25519
+  public, used to authenticate the socket), deviceId, push (kind plus opaque token or
+  endpoint plus apnsTopic). Updating an existing handle requires an authenticated socket.
+  Replies `ok`.
 - `send`: enqueue a sealed message for a recipient. Fields: rid, to (recipient handle),
   envelope (id, ciphertext, messageType, sentAt). Replies `ok`. Oversized payloads yield
   MESSAGE_TOO_LARGE; a full recipient queue yields QUEUE_FULL.
 - `ack`: confirm a delivered message has been durably stored. Fields: id. The relay then
   deletes that queued message.
 - `ping`: heartbeat. Fields: ts. Replies `pong`.
-- `deregister`: delete this account and all of its server side data (device record, prekey
-  bundles, queued messages). Fields: rid. Requires an authenticated socket. Replies `ok`.
+- `deregister`: delete this account and all of its server side data (device record, queued
+  messages). Fields: rid. Requires an authenticated socket. Replies `ok`.
 - `turnCredentials`: request short lived TURN relay credentials for a voice call. Fields:
   rid. Requires an authenticated socket. Replies `turnCredentialsResult`; a relay without
   TURN configured replies error CALLS_UNAVAILABLE.
@@ -114,8 +121,6 @@ person).
 - `connected`: handshake reply. Fields: protocolVersion, challenge.
 - `authenticated`: the socket is now bound to the handle for delivery.
 - `ok`: generic success for a request. Fields: rid, optional data.
-- `preKeyBundle`: a fetched bundle. Fields: rid, bundle.
-- `preKeyCountResult`: remaining keys. Fields: rid, hasSignedPreKey, oneTimeCount.
 - `turnCredentialsResult`: short lived TURN credentials (TURN REST scheme). Fields: rid,
   urls, username (embeds a unix expiry), credential (base64 HMAC over the username),
   expiresAt (unix seconds). Derived per request, never stored server side.
@@ -141,8 +146,9 @@ Variants: `text` (a message body), `retention/request` (request a disappearing m
 of `value` seconds, 0 = off), `retention/accept` (accept a pending request of `value`),
 `retention/cancel` (the requester cancels, or the recipient declines, a pending request),
 `call/offer` (start a voice call: callId plus a complete SDP offer), `call/answer` (accept a
-pending offer: the same callId plus a complete SDP answer), and `call/end` (end, decline, or
-abort the call with that callId, with a short `reason` string).
+pending offer: the same callId plus a complete SDP answer), `call/end` (end, decline, or
+abort the call with that callId, with a short `reason` string), and `verify/confirm` (the
+mutual verification proof, see "Mutual verification semantics").
 
 Decoding is tolerant: unstructured bytes (plain text, malformed JSON) are treated as a raw
 text body, so a nonconforming but honest peer still renders as a message. A structured
@@ -156,7 +162,34 @@ change.
 On decode the receiver bounds every field so a hostile peer cannot force unbounded storage
 or overflow expiry math: a `text` body is capped at 16384 units (longer bodies are
 truncated), a retention `value` above 365 days (31536000 seconds) is not recognized, a call
-id is capped at 64 units, an SDP payload at 8192 units, and a call end reason at 32 units.
+id is capped at 64 units, an SDP payload at 8192 units, a call end reason at 32 units, and
+a `cardHash` must be exactly 44 characters (base64 of a 32 byte sha256 digest).
+
+### Mutual verification semantics
+
+A conversation is usable only after MUTUAL verification: each person scanned the other's
+QR card in person and each pressed "the emojis match" on the SAS screen. Both facts are
+peer to peer contract; the relay sees none of it.
+
+- `verify/confirm` carries `cardHash`, computed over the RECEIVER's card:
+  base64(sha256(utf8(handle) || 0x00 || identityKeyBytes || 0x00 ||
+  signedPreKeyPublicBytes)). Only immutable card fields participate (displayName may
+  change). Because the signed prekey distributes only via the QR card, a correct hash
+  proves the sender held the receiver's card. The receiver recomputes the hash over its
+  own card and silently ignores the message on mismatch.
+- Sending rules, all idempotent: a client sends its confirm when its user confirms the SAS
+  (deferred until a session exists for a responder), replies with its own confirm when an
+  incoming confirm first flips the peer to confirmed, and resends on reconnect while its
+  own confirm is unanswered. Receivers ignore duplicate confirms.
+- Receive gate: until both sides' confirms are exchanged, a receiver processes only
+  `verify/confirm` from that peer. Every other content type is decrypted (to keep the
+  ratchet healthy), acked, and silently discarded: never stored, never displayed, never
+  rung. A conforming client never sends gated content before mutual verification.
+- Unknown senders: an envelope from a handle the receiver has no contact for is handled by
+  messageType. A `prekey` envelope is left unacked (it can only be the confirm of someone
+  whose scan the receiver has not yet reciprocated; it stays queued at the relay until the
+  receiver scans back and reconnects, or the queue TTL expires it). A `whisper` envelope
+  can never become decryptable and is acked and dropped.
 
 ### Call signaling semantics
 
@@ -242,9 +275,8 @@ app maps to a localized string:
 - MALFORMED_MESSAGE: the frame failed validation.
 - UNAUTHENTICATED: an operation that needs an authenticated socket was attempted first.
 - AUTH_FAILED: the challenge signature did not verify.
-- NOT_REGISTERED: authentication was attempted for a handle with no identity key on file.
-- NO_SUCH_HANDLE: a prekey bundle or send targeted an unknown handle.
-- NO_ONE_TIME_PREKEY: a strict prekey fetch found no one time prekey left in the pool.
+- NOT_REGISTERED: authentication was attempted for a handle with no device record on file.
+- NO_SUCH_HANDLE: a send targeted an unknown handle.
 - RATE_LIMITED: the client exceeded a rate or abuse limit.
 - QUEUE_FULL: the recipient queue is at capacity.
 - MESSAGE_TOO_LARGE: the envelope exceeded the maximum allowed size.
@@ -253,8 +285,9 @@ app maps to a localized string:
 
 ## What the relay can and cannot see
 
-Cannot see: message content, display names in message bodies, any private key, the result
-of any decryption.
+Cannot see: message content, display names in message bodies, any private key, any Signal
+identity key or prekey (since 2.0 the relay holds no end to end key material at all, only
+the transport auth public key), the result of any decryption.
 
 Can see: which handles exchange messages, timing, message counts, padded size buckets, and
 the opaque push token or endpoint needed to send a wake. Operators should run the relay

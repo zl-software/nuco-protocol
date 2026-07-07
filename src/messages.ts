@@ -3,7 +3,6 @@
 // relay never inspects it. JSON text frames are used so the protocol stays auditable.
 
 import type { ProtocolVersion } from './version.js';
-import type { PreKeyUpload, PreKeyBundle } from './prekeys.js';
 import type { ErrorCodeValue } from './errors.js';
 
 export type PushKind = 'apns' | 'unifiedpush' | 'none';
@@ -46,33 +45,15 @@ export interface AuthenticateMsg {
   readonly signature: string;
 }
 
-// Register a new handle or update an existing one (push token, keys). Updating an
-// already registered handle requires the socket to be authenticated.
+// Register a new handle or update an existing one (push token, auth key). Updating an
+// already registered handle requires the socket to be authenticated. The relay learns
+// nothing about the Signal identity: session establishment is card to card (see qr.ts).
 export interface RegisterMsg {
   readonly type: 'register';
   readonly rid: string;
-  readonly identityKey: string; // base64 public identity key (the E2EE trust anchor)
   readonly authKey: string; // base64 Ed25519 public key used to authenticate the socket
-  readonly registrationId: number;
   readonly deviceId: number;
   readonly push: PushRegistration;
-}
-
-export interface PublishPreKeysMsg {
-  readonly type: 'publishPreKeys';
-  readonly rid: string;
-  readonly preKeys: PreKeyUpload;
-}
-
-export interface FetchPreKeyBundleMsg {
-  readonly type: 'fetchPreKeyBundle';
-  readonly rid: string;
-  readonly handle: string;
-}
-
-export interface PreKeyCountMsg {
-  readonly type: 'preKeyCount';
-  readonly rid: string;
 }
 
 export interface SendMsg {
@@ -92,8 +73,8 @@ export interface PingMsg {
   readonly ts: number;
 }
 
-// Delete this account and all of its server side data (device record, prekey bundles, queued
-// messages). Requires an authenticated socket. Used for in app account deletion.
+// Delete this account and all of its server side data (device record, queued messages).
+// Requires an authenticated socket. Used for in app account deletion.
 export interface DeregisterMsg {
   readonly type: 'deregister';
   readonly rid: string;
@@ -110,9 +91,6 @@ export type ClientMessage =
   | ConnectMsg
   | AuthenticateMsg
   | RegisterMsg
-  | PublishPreKeysMsg
-  | FetchPreKeyBundleMsg
-  | PreKeyCountMsg
   | SendMsg
   | AckMsg
   | PingMsg
@@ -141,19 +119,6 @@ export interface OkMsg {
   readonly type: 'ok';
   readonly rid: string;
   readonly data?: Record<string, unknown>;
-}
-
-export interface PreKeyBundleMsg {
-  readonly type: 'preKeyBundle';
-  readonly rid: string;
-  readonly bundle: PreKeyBundle;
-}
-
-export interface PreKeyCountResultMsg {
-  readonly type: 'preKeyCountResult';
-  readonly rid: string;
-  readonly hasSignedPreKey: boolean;
-  readonly oneTimeCount: number;
 }
 
 // TURN REST API credentials (the scheme coturn implements with use-auth-secret): the
@@ -191,8 +156,6 @@ export type ServerMessage =
   | ConnectedMsg
   | AuthenticatedMsg
   | OkMsg
-  | PreKeyBundleMsg
-  | PreKeyCountResultMsg
   | TurnCredentialsResultMsg
   | DeliverMsg
   | ErrorMsg
@@ -210,9 +173,6 @@ const CLIENT_MESSAGE_TYPE_MAP: Record<ClientMessageType, true> = {
   connect: true,
   authenticate: true,
   register: true,
-  publishPreKeys: true,
-  fetchPreKeyBundle: true,
-  preKeyCount: true,
   send: true,
   ack: true,
   ping: true,
@@ -224,8 +184,6 @@ const SERVER_MESSAGE_TYPE_MAP: Record<ServerMessageType, true> = {
   connected: true,
   authenticated: true,
   ok: true,
-  preKeyBundle: true,
-  preKeyCountResult: true,
   turnCredentialsResult: true,
   deliver: true,
   error: true,

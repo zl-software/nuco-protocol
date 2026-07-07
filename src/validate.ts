@@ -9,11 +9,6 @@ import type {
   PushKind,
   CipherMessageType,
 } from './messages.js';
-import type {
-  PreKeyUpload,
-  SignedPreKeyPublic,
-  OneTimePreKeyPublic,
-} from './prekeys.js';
 import { ErrorCode } from './errors.js';
 
 export function isRecord(v: unknown): v is Record<string, unknown> {
@@ -38,7 +33,6 @@ export const LIMITS = {
   keyB64MaxLen: 2048,
   signatureB64MaxLen: 2048,
   ciphertextB64MaxLen: 262144, // generous ceiling above the largest padded bucket
-  oneTimeBatchMax: 200,
   ridMaxLen: 128,
   idMaxLen: 128,
   apnsTopicMaxLen: 256,
@@ -57,26 +51,6 @@ function isBase64(v: string): boolean {
 }
 function isKeyB64(v: unknown): v is string {
   return isNonEmptyStr(v) && v.length <= LIMITS.keyB64MaxLen && isBase64(v);
-}
-
-function isSignedPreKey(v: unknown): v is SignedPreKeyPublic {
-  return (
-    isRecord(v) &&
-    isUint(v.keyId) &&
-    isKeyB64(v.publicKey) &&
-    isNonEmptyStr(v.signature) &&
-    (v.signature as string).length <= LIMITS.signatureB64MaxLen
-  );
-}
-function isOneTimePreKey(v: unknown): v is OneTimePreKeyPublic {
-  return isRecord(v) && isUint(v.keyId) && isKeyB64(v.publicKey);
-}
-function isPreKeyUpload(v: unknown): v is PreKeyUpload {
-  if (!isRecord(v)) return false;
-  if (!isSignedPreKey(v.signedPreKey)) return false;
-  if (!Array.isArray(v.oneTimePreKeys)) return false;
-  if (v.oneTimePreKeys.length > LIMITS.oneTimeBatchMax) return false;
-  return v.oneTimePreKeys.every(isOneTimePreKey);
 }
 
 const PUSH_KINDS: readonly PushKind[] = ['apns', 'unifiedpush', 'none'];
@@ -136,9 +110,7 @@ export function parseClientMessage(raw: string): ParseResult {
     }
     case 'register': {
       if (!isRid(v.rid)) return MALFORMED;
-      if (!isKeyB64(v.identityKey)) return MALFORMED;
       if (!isKeyB64(v.authKey)) return MALFORMED;
-      if (!isUint(v.registrationId)) return MALFORMED;
       if (!isUint(v.deviceId)) return MALFORMED;
       if (!isPushRegistration(v.push)) return MALFORMED;
       return {
@@ -146,27 +118,11 @@ export function parseClientMessage(raw: string): ParseResult {
         message: {
           type: 'register',
           rid: v.rid,
-          identityKey: v.identityKey,
           authKey: v.authKey,
-          registrationId: v.registrationId,
           deviceId: v.deviceId,
           push: v.push,
         },
       };
-    }
-    case 'publishPreKeys': {
-      if (!isRid(v.rid)) return MALFORMED;
-      if (!isPreKeyUpload(v.preKeys)) return MALFORMED;
-      return { ok: true, message: { type: 'publishPreKeys', rid: v.rid, preKeys: v.preKeys } };
-    }
-    case 'fetchPreKeyBundle': {
-      if (!isRid(v.rid)) return MALFORMED;
-      if (!isHandle(v.handle)) return MALFORMED;
-      return { ok: true, message: { type: 'fetchPreKeyBundle', rid: v.rid, handle: v.handle } };
-    }
-    case 'preKeyCount': {
-      if (!isRid(v.rid)) return MALFORMED;
-      return { ok: true, message: { type: 'preKeyCount', rid: v.rid } };
     }
     case 'send': {
       if (!isRid(v.rid)) return MALFORMED;

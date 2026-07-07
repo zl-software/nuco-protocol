@@ -30,7 +30,8 @@ export type MessageContent =
   | { readonly t: 'retention/cancel' } // requester cancels, or recipient declines, a pending request
   | { readonly t: 'call/offer'; readonly callId: string; readonly sdp: string } // start a voice call
   | { readonly t: 'call/answer'; readonly callId: string; readonly sdp: string } // accept a pending offer
-  | { readonly t: 'call/end'; readonly callId: string; readonly reason: CallEndReason | (string & {}) };
+  | { readonly t: 'call/end'; readonly callId: string; readonly reason: CallEndReason | (string & {}) }
+  | { readonly t: 'verify/confirm'; readonly cardHash: string }; // mutual verification proof, see below
 
 export type MessageContentType = MessageContent['t'];
 
@@ -58,6 +59,16 @@ export const CALL_END_REASON_MAX_LEN = 32;
 export const CALL_RING_TIMEOUT_SECONDS = 45;
 export const CALL_OFFER_STALE_SECONDS = 120;
 
+// Mutual verification. `verify/confirm` says: this sender scanned the receiver's contact
+// card AND confirmed the emoji SAS in person. cardHash proves the scan: it is
+// base64(sha256(utf8(handle) || 0x00 || identityKeyBytes || 0x00 || signedPreKeyPublicBytes))
+// over the RECEIVER's card (immutable fields only; displayName may change). Since the
+// signed prekey distributes only via the QR card and an initiator's own signed prekey never
+// appears in the X3DH handshake, only someone who held the card can compute the hash. The
+// receiver recomputes it over its own card and ignores the message on mismatch. A sha256
+// digest is 32 bytes, so the base64 form is always exactly 44 characters.
+export const CARD_HASH_LEN = 44;
+
 // Known call end reasons. The wire field stays an open short string so a reason added in a
 // future minor still ends the call on an older peer instead of ringing through the timeout.
 export const CALL_END_REASONS = ['hangup', 'decline', 'busy', 'timeout', 'error'] as const;
@@ -72,6 +83,7 @@ const MESSAGE_CONTENT_TYPE_MAP: Record<MessageContentType, true> = {
   'call/offer': true,
   'call/answer': true,
   'call/end': true,
+  'verify/confirm': true,
 };
 
 export const MESSAGE_CONTENT_TYPES = Object.keys(MESSAGE_CONTENT_TYPE_MAP) as MessageContentType[];
@@ -154,6 +166,8 @@ function isMessageContent(v: unknown): v is MessageContent {
         o.reason.length > 0 &&
         o.reason.length <= CALL_END_REASON_MAX_LEN
       );
+    case 'verify/confirm':
+      return typeof o.cardHash === 'string' && o.cardHash.length === CARD_HASH_LEN;
     default:
       return false;
   }
