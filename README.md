@@ -7,6 +7,13 @@ error code, prekey shape, and the padding scheme.
 
 Read `PROTOCOL.md` for the human readable spec. The typed implementation lives in `src/`.
 
+## Consumers
+
+- [nuco-server](https://github.com/zl-software/nuco-server): the relay. Clone it as a
+  sibling of this repo (this repo's folder must be named `protocol` for the relay's
+  `file:../protocol` dependency to resolve).
+- `nuco-messenger`: the app. Not public yet; it vendors a built copy of this package.
+
 ## Scripts
 
 - `npm run build`: compile to `dist/` (JS plus `.d.ts`). Runs automatically on install via
@@ -21,3 +28,7 @@ Read `PROTOCOL.md` for the human readable spec. The typed implementation lives i
 `PROTOCOL_VERSION` is `major.minor`. Bump the MAJOR for any breaking change; the relay
 rejects mismatched majors. Bump the MINOR for backward compatible additions. Update
 `PROTOCOL.md` in the same change so `npm run check` stays green.
+
+## License
+
+MIT, see [LICENSE](LICENSE).

@@ -3,6 +3,16 @@
   "version": "1.0.0",
   "description": "The single source of truth for the Nuco client and relay wire protocol.",
   "license": "MIT",
+  "private": true,
+  "author": "ZL Software GmbH (https://zlsoftware.at)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zl-software/nuco-protocol.git"
+  },
+  "homepage": "https://github.com/zl-software/nuco-protocol#readme",
+  "bugs": {
+    "url": "https://github.com/zl-software/nuco-protocol/issues"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
