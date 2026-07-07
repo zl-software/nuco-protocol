@@ -20,6 +20,7 @@ import {
   decodeContent,
   callOfferWins,
   CALL_SDP_MAX_LEN,
+  MESSAGE_ID_MAX_LEN,
   type MessageContent,
 } from '../src/index.js';
 
@@ -70,6 +71,8 @@ for (const n of sizes) {
 const fakeSdp = 'v=0\r\no=- 0 0 IN IP4 0.0.0.0\r\n' + 'a=candidate:relay '.repeat(160);
 const contentSamples: MessageContent[] = [
   { t: 'text', body: 'hello' },
+  { t: 'text', body: 'a reply', replyTo: 'a1b2c3d4-0000-4000-8000-000000000000' },
+  { t: 'message/delete', id: 'a1b2c3d4-0000-4000-8000-000000000000' },
   { t: 'retention/request', value: 86400 },
   { t: 'retention/accept', value: 0 },
   { t: 'retention/cancel' },
@@ -93,12 +96,19 @@ if (pad(offerBytes).length !== 4096) {
   failures.push(`call offer of ${offerBytes.length} bytes padded to ${pad(offerBytes).length}, expected 4096`);
 }
 
-// 7. Bounds are enforced: an oversized sdp is not recognized as a call offer.
+// 7. Bounds are enforced: an oversized sdp is not recognized as a call offer, and an
+// oversized message id is not recognized as a delete request.
 const oversized = decodeContent(
   encodeContent({ t: 'call/offer', callId: 'x', sdp: 'a'.repeat(CALL_SDP_MAX_LEN + 1) }),
 );
 if (oversized.t !== 'unknown') {
   failures.push(`oversized sdp decoded as ${oversized.t}, expected unknown`);
+}
+const oversizedId = decodeContent(
+  encodeContent({ t: 'message/delete', id: 'a'.repeat(MESSAGE_ID_MAX_LEN + 1) }),
+);
+if (oversizedId.t !== 'unknown') {
+  failures.push(`oversized message id decoded as ${oversizedId.t}, expected unknown`);
 }
 
 // 8. Structured content with an unrecognized type decodes as unknown; unstructured bytes

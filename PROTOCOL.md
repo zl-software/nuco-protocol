@@ -4,7 +4,7 @@ This document and the typed sources in `src/` are the single source of truth for
 the Nuco app and the Nuco relay talk. The drift checker (`npm run check`) fails if this
 document falls out of sync with the types.
 
-Protocol version: 2.2
+Protocol version: 2.3
 
 The version is `major.minor`. The relay rejects any connection whose MAJOR version does
 not match its own. A higher MINOR is backward compatible: unknown optional fields are
@@ -25,7 +25,9 @@ chat screenshot protection trio (`screenshot/request`, `screenshot/accept`,
 `screenshot/cancel`) to the content layer. Minor 2 added the optional `server` field to
 the QR contact card (card v3): the card owner's resolved relay URL, so the scanner can
 warn at scan time when the two people are not on the same relay. The field never
-participates in the `cardHash` and the relay never sees the card. The 1.x line for history: minor 1
+participates in the `cardHash` and the relay never sees the card. Minor 3 added the
+optional `replyTo` field on `text` (quote an earlier message by its envelope id) and the
+`message/delete` content (ask the peer to remove a text its sender authored). The 1.x line for history: minor 1
 added the content layer, minor 2 `deregister`, minor 3 call signaling plus TURN
 credentials plus the structured unknown decode rule, minor 4 the URL handle and constant
 ping transport conventions (both kept in 2.0).
@@ -153,7 +155,8 @@ decryption.
 
 The plaintext inside an envelope is a typed content object, JSON encoded, so peers can carry
 control messages alongside text on the same sealed channel. The relay never sees any of this.
-Variants: `text` (a message body), `retention/request` (request a disappearing message timer
+Variants: `text` (a message body, with an optional `replyTo` reference quoting an earlier
+message by its envelope id), `retention/request` (request a disappearing message timer
 of `value` seconds, 0 = off), `retention/accept` (accept a pending request of `value`),
 `retention/cancel` (the requester cancels, or the recipient declines, a pending request),
 `screenshot/request` (request per chat screenshot protection `on` or off), `screenshot/accept`
@@ -161,8 +164,16 @@ of `value` seconds, 0 = off), `retention/accept` (accept a pending request of `v
 recipient declines, a pending request), `call/offer` (start a voice call: callId plus a
 complete SDP offer), `call/answer` (accept a pending offer: the same callId plus a complete
 SDP answer), `call/end` (end, decline, or abort the call with that callId, with a short
-`reason` string), and `verify/confirm` (the mutual verification proof, see "Mutual
-verification semantics").
+`reason` string), `verify/confirm` (the mutual verification proof, see "Mutual
+verification semantics"), and `message/delete` (ask the peer to remove the text with that
+envelope id from its device).
+
+A text's envelope id doubles as its cross peer identity: the sender uses the same id as
+its local record key and as the envelope id, and the receiver stores the message under
+that envelope id. `replyTo` and `message/delete.id` both name a message this way. Deletion
+is cooperative client behavior, like screenshot protection: the receiver removes the
+message only if the requesting peer authored it (and resolves a reference it cannot find
+to nothing), and an older peer drops the request as unknown content and keeps its copy.
 
 Screenshot protection follows the retention negotiation shape: a change is a request the
 other side accepts before it applies on either device. Once agreed, each client instructs
@@ -183,8 +194,9 @@ change.
 On decode the receiver bounds every field so a hostile peer cannot force unbounded storage
 or overflow expiry math: a `text` body is capped at 16384 units (longer bodies are
 truncated), a retention `value` above 365 days (31536000 seconds) is not recognized, a call
-id is capped at 64 units, an SDP payload at 8192 units, a call end reason at 32 units, and
-a `cardHash` must be exactly 44 characters (base64 of a 32 byte sha256 digest).
+id is capped at 64 units, an SDP payload at 8192 units, a call end reason at 32 units, a
+message id (`message/delete.id` or a `replyTo` reference) at 64 units, and a `cardHash`
+must be exactly 44 characters (base64 of a 32 byte sha256 digest).
 
 ### Mutual verification semantics
 
