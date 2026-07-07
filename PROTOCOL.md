@@ -4,7 +4,7 @@ This document and the typed sources in `src/` are the single source of truth for
 the Nuco app and the Nuco relay talk. The drift checker (`npm run check`) fails if this
 document falls out of sync with the types.
 
-Protocol version: 2.1
+Protocol version: 2.2
 
 The version is `major.minor`. The relay rejects any connection whose MAJOR version does
 not match its own. A higher MINOR is backward compatible: unknown optional fields are
@@ -22,7 +22,10 @@ end to end identity. The content layer gained `verify/confirm` and the mutual ve
 rules (see "Mutual verification semantics"): a conversation is usable only after both
 peers scanned each other and confirmed the emoji SAS. Minor 1 of major 2 added the per
 chat screenshot protection trio (`screenshot/request`, `screenshot/accept`,
-`screenshot/cancel`) to the content layer. The 1.x line for history: minor 1
+`screenshot/cancel`) to the content layer. Minor 2 added the optional `server` field to
+the QR contact card (card v3): the card owner's resolved relay URL, so the scanner can
+warn at scan time when the two people are not on the same relay. The field never
+participates in the `cardHash` and the relay never sees the card. The 1.x line for history: minor 1
 added the content layer, minor 2 `deregister`, minor 3 call signaling plus TURN
 credentials plus the structured unknown decode rule, minor 4 the URL handle and constant
 ping transport conventions (both kept in 2.0).
@@ -58,10 +61,16 @@ integer `ts` for compatibility.
 
 Each install generates a long term identity key pair, a registration id, and one signed
 prekey. A routing handle is a public, opaque, app generated id used only for delivery. The
-QR contact card (v2) encodes public data only: the handle, the base64 identity public key,
+QR contact card (v3) encodes public data only: the handle, the base64 identity public key,
 the registration id, the signed prekey (key id, public key, and its signature by the
-identity key), a human readable fingerprint, and a display name. It never encodes a
-private key.
+identity key), a human readable fingerprint, a display name, and optionally the owner's
+resolved relay ws(s) URL (`server`, since card v3). It never encodes a private key.
+
+Handles are namespaced per relay, so two people on different relays cannot message each
+other. The `server` field exists so the scanning app can detect that at scan time and
+warn instead of failing later. It is optional and best effort: v1/v2 cards lack it, a
+scanner treats a malformed value as absent, and the field never participates in the
+`cardHash` (display name aside, only immutable identity fields do).
 
 The card is the ONLY channel that distributes the signed prekey; the relay never stores or
 serves key material beyond the transport auth key. Scanning a card therefore lets the
