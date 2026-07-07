@@ -28,6 +28,9 @@ export type MessageContent =
   | { readonly t: 'retention/request'; readonly value: number } // requested retention, seconds (0 = off)
   | { readonly t: 'retention/accept'; readonly value: number } // accept a pending request of `value`
   | { readonly t: 'retention/cancel' } // requester cancels, or recipient declines, a pending request
+  | { readonly t: 'screenshot/request'; readonly on: boolean } // request per chat screenshot protection on or off
+  | { readonly t: 'screenshot/accept'; readonly on: boolean } // accept a pending request of `on`
+  | { readonly t: 'screenshot/cancel' } // requester cancels, or recipient declines, a pending request
   | { readonly t: 'call/offer'; readonly callId: string; readonly sdp: string } // start a voice call
   | { readonly t: 'call/answer'; readonly callId: string; readonly sdp: string } // accept a pending offer
   | { readonly t: 'call/end'; readonly callId: string; readonly reason: CallEndReason | (string & {}) }
@@ -80,6 +83,9 @@ const MESSAGE_CONTENT_TYPE_MAP: Record<MessageContentType, true> = {
   'retention/request': true,
   'retention/accept': true,
   'retention/cancel': true,
+  'screenshot/request': true,
+  'screenshot/accept': true,
+  'screenshot/cancel': true,
   'call/offer': true,
   'call/answer': true,
   'call/end': true,
@@ -146,6 +152,11 @@ function isMessageContent(v: unknown): v is MessageContent {
         o.value <= RETENTION_MAX_SECONDS
       );
     case 'retention/cancel':
+      return true;
+    case 'screenshot/request':
+    case 'screenshot/accept':
+      return typeof o.on === 'boolean';
+    case 'screenshot/cancel':
       return true;
     case 'call/offer':
     case 'call/answer':

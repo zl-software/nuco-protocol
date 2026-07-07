@@ -4,7 +4,7 @@ This document and the typed sources in `src/` are the single source of truth for
 the Nuco app and the Nuco relay talk. The drift checker (`npm run check`) fails if this
 document falls out of sync with the types.
 
-Protocol version: 2.0
+Protocol version: 2.1
 
 The version is `major.minor`. The relay rejects any connection whose MAJOR version does
 not match its own. A higher MINOR is backward compatible: unknown optional fields are
@@ -20,7 +20,9 @@ handles"), so sessions are established fully offline at the scan. `register` no 
 carries the Signal identity key or registration id; the relay learns nothing about the
 end to end identity. The content layer gained `verify/confirm` and the mutual verification
 rules (see "Mutual verification semantics"): a conversation is usable only after both
-peers scanned each other and confirmed the emoji SAS. The 1.x line for history: minor 1
+peers scanned each other and confirmed the emoji SAS. Minor 1 of major 2 added the per
+chat screenshot protection trio (`screenshot/request`, `screenshot/accept`,
+`screenshot/cancel`) to the content layer. The 1.x line for history: minor 1
 added the content layer, minor 2 `deregister`, minor 3 call signaling plus TURN
 credentials plus the structured unknown decode rule, minor 4 the URL handle and constant
 ping transport conventions (both kept in 2.0).
@@ -145,10 +147,20 @@ control messages alongside text on the same sealed channel. The relay never sees
 Variants: `text` (a message body), `retention/request` (request a disappearing message timer
 of `value` seconds, 0 = off), `retention/accept` (accept a pending request of `value`),
 `retention/cancel` (the requester cancels, or the recipient declines, a pending request),
-`call/offer` (start a voice call: callId plus a complete SDP offer), `call/answer` (accept a
-pending offer: the same callId plus a complete SDP answer), `call/end` (end, decline, or
-abort the call with that callId, with a short `reason` string), and `verify/confirm` (the
-mutual verification proof, see "Mutual verification semantics").
+`screenshot/request` (request per chat screenshot protection `on` or off), `screenshot/accept`
+(accept a pending request of `on`), `screenshot/cancel` (the requester cancels, or the
+recipient declines, a pending request), `call/offer` (start a voice call: callId plus a
+complete SDP offer), `call/answer` (accept a pending offer: the same callId plus a complete
+SDP answer), `call/end` (end, decline, or abort the call with that callId, with a short
+`reason` string), and `verify/confirm` (the mutual verification proof, see "Mutual
+verification semantics").
+
+Screenshot protection follows the retention negotiation shape: a change is a request the
+other side accepts before it applies on either device. Once agreed, each client instructs
+its OS to block screenshots and screen recording while that conversation is on screen.
+Enforcement is cooperative client behavior, not a cryptographic guarantee: a modified
+client, an older client that drops the trio as unknown content, or a second camera pointed
+at the screen is not stopped by it.
 
 Decoding is tolerant: unstructured bytes (plain text, malformed JSON) are treated as a raw
 text body, so a nonconforming but honest peer still renders as a message. A structured
