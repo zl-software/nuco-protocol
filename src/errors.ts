@@ -9,6 +9,8 @@ export enum ErrorCode {
   NotRegistered = 'NOT_REGISTERED',
   NoSuchHandle = 'NO_SUCH_HANDLE',
   RateLimited = 'RATE_LIMITED',
+  AttestationRequired = 'ATTESTATION_REQUIRED',
+  AttestationFailed = 'ATTESTATION_FAILED',
   QueueFull = 'QUEUE_FULL',
   MessageTooLarge = 'MESSAGE_TOO_LARGE',
   CallsUnavailable = 'CALLS_UNAVAILABLE',

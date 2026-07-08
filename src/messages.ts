@@ -45,6 +45,17 @@ export interface AuthenticateMsg {
   readonly signature: string;
 }
 
+// Optional proof that a NEW handle registration comes from a genuine build of the
+// official app. Whether it is demanded is relay policy (see "App attestation" in
+// PROTOCOL.md): a relay that enforces gating answers a plain register with error
+// ATTESTATION_REQUIRED and the client retries once with this field attached. The
+// relay verifies the attestation and discards it; nothing is stored.
+export interface RegisterAttestation {
+  readonly kind: string; // 'apple-app-attest' is the only kind defined today
+  readonly keyId: string; // base64 App Attest key id (SHA-256 of the attested public key)
+  readonly data: string; // base64 CBOR attestation object from DCAppAttestService
+}
+
 // Register a new handle or update an existing one (push token, auth key). Updating an
 // already registered handle requires the socket to be authenticated. The relay learns
 // nothing about the Signal identity: session establishment is card to card (see qr.ts).
@@ -54,6 +65,7 @@ export interface RegisterMsg {
   readonly authKey: string; // base64 Ed25519 public key used to authenticate the socket
   readonly deviceId: number;
   readonly push: PushRegistration;
+  readonly attestation?: RegisterAttestation;
 }
 
 export interface SendMsg {

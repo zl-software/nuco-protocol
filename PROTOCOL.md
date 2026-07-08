@@ -4,7 +4,7 @@ This document and the typed sources in `src/` are the single source of truth for
 the Nuco app and the Nuco relay talk. The drift checker (`npm run check`) fails if this
 document falls out of sync with the types.
 
-Protocol version: 2.3
+Protocol version: 2.4
 
 The version is `major.minor`. The relay rejects any connection whose MAJOR version does
 not match its own. A higher MINOR is backward compatible: unknown optional fields are
@@ -27,7 +27,9 @@ the QR contact card (card v3): the card owner's resolved relay URL, so the scann
 warn at scan time when the two people are not on the same relay. The field never
 participates in the `cardHash` and the relay never sees the card. Minor 3 added the
 optional `replyTo` field on `text` (quote an earlier message by its envelope id) and the
-`message/delete` content (ask the peer to remove a text its sender authored). The 1.x line for history: minor 1
+`message/delete` content (ask the peer to remove a text its sender authored). Minor 4
+added the optional `attestation` field on `register` plus the ATTESTATION_REQUIRED and
+ATTESTATION_FAILED error codes (registration gating, see "App attestation"). The 1.x line for history: minor 1
 added the content layer, minor 2 `deregister`, minor 3 call signaling plus TURN
 credentials plus the structured unknown decode rule, minor 4 the URL handle and constant
 ping transport conventions (both kept in 2.0).
@@ -108,6 +110,41 @@ which is allowed before authentication (trust on first use for the random handle
 namespace; the identity key, not the handle, is the trust anchor that peers verify in
 person).
 
+## App attestation (registration gating)
+
+A relay MAY gate the creation of NEW handles on proof that the registering client is a
+genuine build of an official app. This is relay policy, not a protocol requirement: the
+protocol only defines the carrier field and the error codes. Enforcement is off by
+default; the reference relay enforces it. Register updates for an existing handle are
+already authenticated by the transport auth key and are never gated.
+
+The flow is reactive. A client first sends a plain `register`. A relay that enforces
+gating replies `error` ATTESTATION_REQUIRED (with the request's rid). The client then
+produces an attestation bound to this socket's `connected` challenge and retries
+`register` once with the optional `attestation` field attached:
+
+- kind: the attestation scheme. `apple-app-attest` is the only kind defined today; a
+  relay answers a kind it does not accept with ATTESTATION_REQUIRED.
+- keyId: base64 App Attest key id (the SHA-256 of the attested public key).
+- data: base64 CBOR attestation object from Apple's DCAppAttestService.
+
+Challenge binding, spelled out because two hashing conventions meet here: for
+`apple-app-attest` the client passes the challenge STRING exactly as it appeared in the
+`connected` frame (the base64 text itself) to DCAppAttestService, so the attestation's
+client data hash is the SHA-256 over the UTF-8 bytes of that base64 string. This differs
+from `authenticate`, whose Ed25519 signature is computed over the base64 DECODED nonce
+bytes. The challenge is per socket, random, and single purpose; a failed or missing
+attestation never consumes it, so the subsequent `authenticate` on the same socket still
+works.
+
+The relay verifies the attestation following Apple's published steps (certificate chain
+to the pinned Apple App Attestation Root CA, nonce binding to the challenge, key id, app
+id, sign counter, environment) and then DISCARDS it. Nothing new is stored on the device
+record: no key id, no receipt. A failed verification yields ATTESTATION_FAILED. What the
+relay learns is only that the registering client is a genuine build of the app id it
+requires; what Apple learns is only that the app requested an attestation, never the
+handle or relay involved.
+
 ## Client to server messages
 
 - `connect`: open a session. Fields: protocolVersion, handle.
@@ -115,8 +152,9 @@ person).
   challenge nonce).
 - `register`: create or update a device record. Fields: rid, authKey (base64 Ed25519
   public, used to authenticate the socket), deviceId, push (kind plus opaque token or
-  endpoint plus apnsTopic). Updating an existing handle requires an authenticated socket.
-  Replies `ok`.
+  endpoint plus apnsTopic), and optionally attestation (kind, keyId, data; see "App
+  attestation"). Updating an existing handle requires an authenticated socket. Replies
+  `ok`.
 - `send`: enqueue a sealed message for a recipient. Fields: rid, to (recipient handle),
   envelope (id, ciphertext, messageType, sentAt). Replies `ok`. Oversized payloads yield
   MESSAGE_TOO_LARGE; a full recipient queue yields QUEUE_FULL.
@@ -297,7 +335,10 @@ The relay stores sealed messages per recipient with a queue size cap and a time 
 When the recipient has a live authenticated socket, queued and live messages are pushed as
 `deliver` frames with an increasing seq. The client acks each by id; the relay deletes on
 ack and dedupes by id, so delivery is at least once. When the recipient has no live socket,
-the relay triggers a content free push wake (APNs or UnifiedPush) instead.
+the relay triggers a content free push (APNs or UnifiedPush) instead. The push never
+carries message content or sender identity: on APNs it is a visible generic notification
+whose text is a fixed localization key resolved on the device, on UnifiedPush an opaque
+wake body.
 
 ## Error codes
 
@@ -311,6 +352,9 @@ app maps to a localized string:
 - NOT_REGISTERED: authentication was attempted for a handle with no device record on file.
 - NO_SUCH_HANDLE: a send targeted an unknown handle.
 - RATE_LIMITED: the client exceeded a rate or abuse limit.
+- ATTESTATION_REQUIRED: this relay only creates new handles for attested registrations;
+  retry `register` with the attestation field (see "App attestation").
+- ATTESTATION_FAILED: the supplied attestation did not verify.
 - QUEUE_FULL: the recipient queue is at capacity.
 - MESSAGE_TOO_LARGE: the envelope exceeded the maximum allowed size.
 - CALLS_UNAVAILABLE: the relay has no TURN server configured, so voice calls cannot connect.
