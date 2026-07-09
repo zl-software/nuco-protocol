@@ -4,7 +4,7 @@ This document and the typed sources in `src/` are the single source of truth for
 the Nuco app and the Nuco relay talk. The drift checker (`npm run check`) fails if this
 document falls out of sync with the types.
 
-Protocol version: 2.5
+Protocol version: 2.6
 
 The version is `major.minor`. The relay rejects any connection whose MAJOR version does
 not match its own. A higher MINOR is backward compatible: unknown optional fields are
@@ -31,7 +31,8 @@ optional `replyTo` field on `text` (quote an earlier message by its envelope id)
 added the optional `attestation` field on `register` plus the ATTESTATION_REQUIRED and
 ATTESTATION_FAILED error codes (registration gating, see "App attestation"). Minor 5
 added the `call/accept` content (the callee's immediate accepted marker, sent before the
-answer sdp is ready). The 1.x line for history: minor 1
+answer sdp is ready). Minor 6 added the `profile/name` content (a renamed sender announces
+its new display name to each mutually verified contact). The 1.x line for history: minor 1
 added the content layer, minor 2 `deregister`, minor 3 call signaling plus TURN
 credentials plus the structured unknown decode rule, minor 4 the URL handle and constant
 ping transport conventions (both kept in 2.0).
@@ -206,8 +207,9 @@ complete SDP offer), `call/accept` (the callee pressed answer; the answer sdp is
 produced), `call/answer` (accept a pending offer: the same callId plus a complete
 SDP answer), `call/end` (end, decline, or abort the call with that callId, with a short
 `reason` string), `verify/confirm` (the mutual verification proof, see "Mutual
-verification semantics"), and `message/delete` (ask the peer to remove the text with that
-envelope id from its device).
+verification semantics"), `message/delete` (ask the peer to remove the text with that
+envelope id from its device), and `profile/name` (the sender's new display name after a
+rename; the receiver updates its stored contact name).
 
 A text's envelope id doubles as its cross peer identity: the sender uses the same id as
 its local record key and as the envelope id, and the receiver stores the message under
@@ -215,6 +217,13 @@ that envelope id. `replyTo` and `message/delete.id` both name a message this way
 is cooperative client behavior, like screenshot protection: the receiver removes the
 message only if the requesting peer authored it (and resolves a reference it cannot find
 to nothing), and an older peer drops the request as unknown content and keeps its copy.
+
+A rename is announced, not negotiated: after changing their display name, a client sends
+`profile/name` once to each mutually verified contact (resending on reconnect until the
+relay accepts it; receivers treat a repeated unchanged name as a no-op). Applying it is
+cooperative client behavior, like deletion. The display name never participates in the
+verification `cardHash`, so a rename cannot break or fake verification; a pre 2.6 peer
+drops the content as unknown and keeps the name from the last scan.
 
 Screenshot protection follows the retention negotiation shape: a change is a request the
 other side accepts before it applies on either device. Once agreed, each client instructs
@@ -236,8 +245,9 @@ On decode the receiver bounds every field so a hostile peer cannot force unbound
 or overflow expiry math: a `text` body is capped at 16384 units (longer bodies are
 truncated), a retention `value` above 365 days (31536000 seconds) is not recognized, a call
 id is capped at 64 units, an SDP payload at 8192 units, a call end reason at 32 units, a
-message id (`message/delete.id` or a `replyTo` reference) at 64 units, and a `cardHash`
-must be exactly 44 characters (base64 of a 32 byte sha256 digest).
+message id (`message/delete.id` or a `replyTo` reference) at 64 units, a `profile/name`
+name at 64 units (and it must be non empty), and a `cardHash` must be exactly 44
+characters (base64 of a 32 byte sha256 digest).
 
 ### Mutual verification semantics
 

@@ -36,7 +36,8 @@ export type MessageContent =
   | { readonly t: 'call/answer'; readonly callId: string; readonly sdp: string } // accept a pending offer
   | { readonly t: 'call/end'; readonly callId: string; readonly reason: CallEndReason | (string & {}) }
   | { readonly t: 'verify/confirm'; readonly cardHash: string } // mutual verification proof, see below
-  | { readonly t: 'message/delete'; readonly id: string }; // retract a text the sender authored, see below
+  | { readonly t: 'message/delete'; readonly id: string } // retract a text the sender authored, see below
+  | { readonly t: 'profile/name'; readonly name: string }; // the sender's new display name, see below
 
 export type MessageContentType = MessageContent['t'];
 
@@ -91,6 +92,14 @@ export const CALL_OFFER_STALE_SECONDS = 120;
 // digest is 32 bytes, so the base64 form is always exactly 44 characters.
 export const CARD_HASH_LEN = 44;
 
+// Display name propagation (since 2.6). `profile/name` announces the sender's new display
+// name after a rename, sent once per mutually verified contact. The receiver updates its
+// stored contact name and may show a local note; applying it is cooperative client
+// behavior, and a pre 2.6 peer drops it as unknown content. The display name never
+// participates in the verification cardHash (see above), so a rename cannot break or fake
+// verification. The cap bounds hostile input; clients keep their own tighter entry limits.
+export const NAME_MAX_LEN = 64;
+
 // Known call end reasons. The wire field stays an open short string so a reason added in a
 // future minor still ends the call on an older peer instead of ringing through the timeout.
 export const CALL_END_REASONS = ['hangup', 'decline', 'busy', 'timeout', 'error'] as const;
@@ -111,6 +120,7 @@ const MESSAGE_CONTENT_TYPE_MAP: Record<MessageContentType, true> = {
   'call/end': true,
   'verify/confirm': true,
   'message/delete': true,
+  'profile/name': true,
 };
 
 export const MESSAGE_CONTENT_TYPES = Object.keys(MESSAGE_CONTENT_TYPE_MAP) as MessageContentType[];
@@ -208,6 +218,8 @@ function isMessageContent(v: unknown): v is MessageContent {
       return typeof o.cardHash === 'string' && o.cardHash.length === CARD_HASH_LEN;
     case 'message/delete':
       return isMessageId(o.id);
+    case 'profile/name':
+      return typeof o.name === 'string' && o.name.length > 0 && o.name.length <= NAME_MAX_LEN;
     default:
       return false;
   }

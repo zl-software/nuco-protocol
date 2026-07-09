@@ -21,6 +21,7 @@ import {
   callOfferWins,
   CALL_SDP_MAX_LEN,
   MESSAGE_ID_MAX_LEN,
+  NAME_MAX_LEN,
   type MessageContent,
 } from '../src/index.js';
 
@@ -82,6 +83,7 @@ const contentSamples: MessageContent[] = [
   { t: 'call/offer', callId: 'a1b2c3d4-0000-4000-8000-000000000000', sdp: fakeSdp },
   { t: 'call/answer', callId: 'a1b2c3d4-0000-4000-8000-000000000000', sdp: fakeSdp },
   { t: 'call/end', callId: 'a1b2c3d4-0000-4000-8000-000000000000', reason: 'hangup' },
+  { t: 'profile/name', name: 'Alice Example' },
 ];
 for (const sample of contentSamples) {
   const decoded = decodeContent(encodeContent(sample));
@@ -109,6 +111,16 @@ const oversizedId = decodeContent(
 );
 if (oversizedId.t !== 'unknown') {
   failures.push(`oversized message id decoded as ${oversizedId.t}, expected unknown`);
+}
+const oversizedName = decodeContent(
+  encodeContent({ t: 'profile/name', name: 'a'.repeat(NAME_MAX_LEN + 1) }),
+);
+if (oversizedName.t !== 'unknown') {
+  failures.push(`oversized profile name decoded as ${oversizedName.t}, expected unknown`);
+}
+const emptyName = decodeContent(encodeContent({ t: 'profile/name', name: '' }));
+if (emptyName.t !== 'unknown') {
+  failures.push(`empty profile name decoded as ${emptyName.t}, expected unknown`);
 }
 
 // 8. Structured content with an unrecognized type decodes as unknown; unstructured bytes
