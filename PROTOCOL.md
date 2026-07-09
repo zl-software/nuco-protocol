@@ -4,7 +4,7 @@ This document and the typed sources in `src/` are the single source of truth for
 the Nuco app and the Nuco relay talk. The drift checker (`npm run check`) fails if this
 document falls out of sync with the types.
 
-Protocol version: 2.4
+Protocol version: 2.5
 
 The version is `major.minor`. The relay rejects any connection whose MAJOR version does
 not match its own. A higher MINOR is backward compatible: unknown optional fields are
@@ -29,7 +29,9 @@ participates in the `cardHash` and the relay never sees the card. Minor 3 added 
 optional `replyTo` field on `text` (quote an earlier message by its envelope id) and the
 `message/delete` content (ask the peer to remove a text its sender authored). Minor 4
 added the optional `attestation` field on `register` plus the ATTESTATION_REQUIRED and
-ATTESTATION_FAILED error codes (registration gating, see "App attestation"). The 1.x line for history: minor 1
+ATTESTATION_FAILED error codes (registration gating, see "App attestation"). Minor 5
+added the `call/accept` content (the callee's immediate accepted marker, sent before the
+answer sdp is ready). The 1.x line for history: minor 1
 added the content layer, minor 2 `deregister`, minor 3 call signaling plus TURN
 credentials plus the structured unknown decode rule, minor 4 the URL handle and constant
 ping transport conventions (both kept in 2.0).
@@ -200,7 +202,8 @@ of `value` seconds, 0 = off), `retention/accept` (accept a pending request of `v
 `screenshot/request` (request per chat screenshot protection `on` or off), `screenshot/accept`
 (accept a pending request of `on`), `screenshot/cancel` (the requester cancels, or the
 recipient declines, a pending request), `call/offer` (start a voice call: callId plus a
-complete SDP offer), `call/answer` (accept a pending offer: the same callId plus a complete
+complete SDP offer), `call/accept` (the callee pressed answer; the answer sdp is being
+produced), `call/answer` (accept a pending offer: the same callId plus a complete
 SDP answer), `call/end` (end, decline, or abort the call with that callId, with a short
 `reason` string), `verify/confirm` (the mutual verification proof, see "Mutual
 verification semantics"), and `message/delete` (ask the peer to remove the text with that
@@ -291,12 +294,19 @@ in the 4096 bucket).
   rejected), `busy` (callee already in a call), `timeout` (caller gave up unanswered),
   `error` (setup or media failure). Receivers treat an unrecognized reason like a generic
   end so future reasons still stop the ring.
+- Accepted marker. Producing the `call/answer` takes real time on the callee (a TURN
+  credential fetch, microphone acquisition, and the full relay only ICE gathering), so
+  since minor 5 the callee sends `call/accept` (callId only) the moment answer is pressed,
+  before that work starts. The caller leaves its ringing state on `call/accept` instead of
+  seconds later on the answer. Purely informational and best effort: `call/answer` remains
+  the authoritative transition (a caller that never got the accept behaves exactly as
+  before), and a pre 2.5 peer drops `call/accept` as unknown content.
 - Glare. When both peers send each other offers concurrently, the offer with the smaller
   callId (plain code unit comparison, see `callOfferWins`) wins on both sides; the loser
   silently abandons its own offer and answers the winner. No extra round trip, no signal
   for the abandoned offer.
-- A `call/answer` for a callId the caller no longer has active is ignored (the caller's
-  earlier queued `call/end` already tells the callee why).
+- A `call/accept` or `call/answer` for a callId the caller no longer has active is ignored
+  (the caller's earlier queued `call/end` already tells the callee why).
 
 ## Voice calls
 
