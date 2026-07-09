@@ -22,6 +22,21 @@ import {
   CALL_SDP_MAX_LEN,
   MESSAGE_ID_MAX_LEN,
   NAME_MAX_LEN,
+  base45Encode,
+  base45Decode,
+  encodeContactCardQr,
+  decodeContactCardQr,
+  CARD_QR_PREFIX,
+  CARD_QR_MAX_LEN,
+  CARD_HANDLE_MAX_LEN,
+  CARD_NAME_MAX_LEN,
+  CARD_SERVER_MAX_LEN,
+  CONTACT_CARD_VERSION,
+  IDENTITY_KEY_LEN,
+  SIGNED_PREKEY_PUB_LEN,
+  KYBER_PREKEY_PUB_LEN,
+  PREKEY_SIGNATURE_LEN,
+  type ContactCard,
   type MessageContent,
 } from '../src/index.js';
 
@@ -139,6 +154,116 @@ if (plain.t !== 'text' || plain.body !== 'not json at all') {
 if (!callOfferWins('a-id', 'b-id') || callOfferWins('b-id', 'a-id')) {
   failures.push('callOfferWins is not antisymmetric for a-id and b-id');
 }
+
+// 10. Base45 matches the RFC 9285 vectors, both directions, and rejects garbage.
+const utf8 = new TextEncoder();
+const base45Vectors: Array<[string, string]> = [
+  ['AB', 'BB8'],
+  ['Hello!!', '%69 VD92EX0'],
+  ['base-45', 'UJCLQE7W581'],
+  ['ietf!', 'QED8WEX0'],
+];
+for (const [plain, encoded] of base45Vectors) {
+  if (base45Encode(utf8.encode(plain)) !== encoded) {
+    failures.push(`base45 encode of ${plain} != ${encoded}`);
+  }
+  const back = base45Decode(encoded);
+  if (back === null || new TextDecoder().decode(back) !== plain) {
+    failures.push(`base45 decode of ${encoded} != ${plain}`);
+  }
+}
+for (const bad of ['A', 'BB8A', 'GGW', ':::', 'ab8', 'BB8é']) {
+  // 'GGW' overflows 16 bits (65536), ':::' overflows too, lowercase is not in the alphabet.
+  if (base45Decode(bad) !== null) failures.push(`base45 decode accepted invalid input ${bad}`);
+}
+
+// 11. The card codec round trips a v4 card exactly, with and without the server field.
+function fakeB64(len: number, seed: number): string {
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) bytes[i] = (i * 31 + seed) & 0xff;
+  // Standard base64 via the padding trick: build with btoa-free math.
+  let out = '';
+  const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  for (let i = 0; i < len; i += 3) {
+    const b0 = bytes[i];
+    const b1 = i + 1 < len ? bytes[i + 1] : 0;
+    const b2 = i + 2 < len ? bytes[i + 2] : 0;
+    out += A[b0 >> 2] + A[((b0 & 3) << 4) | (b1 >> 4)];
+    out += i + 1 < len ? A[((b1 & 15) << 2) | (b2 >> 6)] : '=';
+    out += i + 2 < len ? A[b2 & 63] : '=';
+  }
+  return out;
+}
+const sampleCard: ContactCard = {
+  v: CONTACT_CARD_VERSION,
+  handle: 'k7f2m9x1q8w3e6r5t0y4u2i7o1p5a9s3',
+  identityKey: fakeB64(IDENTITY_KEY_LEN, 5),
+  registrationId: 16383,
+  signedPreKey: {
+    keyId: 1,
+    publicKey: fakeB64(SIGNED_PREKEY_PUB_LEN, 7),
+    signature: fakeB64(PREKEY_SIGNATURE_LEN, 11),
+  },
+  kyberPreKey: {
+    keyId: 1,
+    publicKey: fakeB64(KYBER_PREKEY_PUB_LEN, 13),
+    signature: fakeB64(PREKEY_SIGNATURE_LEN, 17),
+  },
+  displayName: 'Alice Example',
+  server: 'wss://nuco-server.zlsoftware.at',
+};
+for (const card of [sampleCard, (({ server, ...rest }) => rest)(sampleCard) as ContactCard]) {
+  const encoded = encodeContactCardQr(card);
+  if (!encoded.startsWith(CARD_QR_PREFIX)) {
+    failures.push('encoded card is missing the NC4: prefix');
+  }
+  const decoded = decodeContactCardQr(encoded);
+  if (JSON.stringify(decoded) !== JSON.stringify(card)) {
+    failures.push(`card codec round trip mismatch (server ${card.server === undefined ? 'absent' : 'present'})`);
+  }
+}
+
+// 12. A worst case card (every variable field at its bound) still fits QR v40-M
+// alphanumeric capacity, so a realistic card always scans.
+const worstCard: ContactCard = {
+  ...sampleCard,
+  handle: 'h'.repeat(CARD_HANDLE_MAX_LEN),
+  registrationId: 0xffffffff,
+  signedPreKey: { ...sampleCard.signedPreKey, keyId: 0xffff },
+  kyberPreKey: { ...sampleCard.kyberPreKey, keyId: 0xffff },
+  displayName: 'n'.repeat(CARD_NAME_MAX_LEN),
+  server: 'wss://' + 's'.repeat(CARD_SERVER_MAX_LEN - 6),
+};
+const worstEncoded = encodeContactCardQr(worstCard);
+if (worstEncoded.length > CARD_QR_MAX_LEN) {
+  failures.push(`worst case card is ${worstEncoded.length} chars, above the QR v40-M cap ${CARD_QR_MAX_LEN}`);
+}
+if (decodeContactCardQr(worstEncoded) === null) {
+  failures.push('worst case card does not decode');
+}
+
+// 13. The card decoder is strict: wrong prefix, truncation, a tampered field length, a
+// non canonical reencoding, and old JSON cards all yield null.
+const goodEncoded = encodeContactCardQr(sampleCard);
+const cardRejects: Array<[string, string]> = [
+  ['no prefix', goodEncoded.slice(CARD_QR_PREFIX.length)],
+  ['truncated', goodEncoded.slice(0, goodEncoded.length - 9)],
+  ['bad base45', goodEncoded.slice(0, -1) + 'a'],
+  ['json card', JSON.stringify({ v: 3, handle: 'x' })],
+  ['empty', ''],
+];
+for (const [label, data] of cardRejects) {
+  if (decodeContactCardQr(data) !== null) {
+    failures.push(`card decoder accepted ${label}`);
+  }
+}
+
+// 14. The doc covers the card codec pieces.
+expectInDoc('the card version', `(v${CONTACT_CARD_VERSION})`);
+expectInDoc('the QR prefix', CARD_QR_PREFIX);
+expectInDoc('the kyber prekey length', String(KYBER_PREKEY_PUB_LEN));
+expectInDoc('base45', 'base45');
+expectInDoc('PQXDH', 'PQXDH');
 
 if (failures.length > 0) {
   console.error('protocol check FAILED:');

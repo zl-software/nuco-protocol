@@ -4,13 +4,23 @@ This document and the typed sources in `src/` are the single source of truth for
 the Nuco app and the Nuco relay talk. The drift checker (`npm run check`) fails if this
 document falls out of sync with the types.
 
-Protocol version: 2.6
+Protocol version: 3.0
 
 The version is `major.minor`. The relay rejects any connection whose MAJOR version does
 not match its own. A higher MINOR is backward compatible: unknown optional fields are
 ignored, but a relay answers a frame TYPE it does not know with MALFORMED_MESSAGE (and no
 rid), so a client MUST NOT send frames newer than the minor the relay advertises in its
 `connected` reply; that advertised minor exists exactly for this feature negotiation.
+
+Major 3 makes the initial key agreement post quantum. Sessions establish with PQXDH
+(libsignal: X25519 agreement plus an ML-KEM-1024 encapsulation) instead of X3DH, so a
+recording of today's traffic cannot be decrypted later by a quantum computer. Each
+install now also generates ONE signed Kyber prekey next to the elliptic curve signed
+prekey, and the QR contact card (v4) carries it; because the Kyber public key is 1569
+raw bytes, the card moved from JSON to a binary CBOR payload in base45 with the `NC4:`
+prefix (see "Identity and handles"), and the derivable `fingerprint` field was dropped.
+The verification `cardHash` now also commits to the Kyber prekey. No transport frames
+changed; the relay still never sees any Signal key material.
 
 Major 2 is a breaking cut. The relay stores and serves no prekeys: the `publishPreKeys`,
 `fetchPreKeyBundle`, and `preKeyCount` client frames and the `preKeyBundle` and
@@ -41,7 +51,7 @@ ping transport conventions (both kept in 2.0).
 
 The relay is untrusted. It only ever sees ciphertext plus routing metadata (who, when,
 and a padded size bucket). It never sees plaintext and never holds a private key. All
-content encryption (Signal Protocol: X3DH plus Double Ratchet) happens on the device.
+content encryption (Signal Protocol: PQXDH plus Double Ratchet) happens on the device.
 Clients pad every plaintext to a fixed size bucket before sealing it, so the relay learns
 only a coarse size. The metadata that remains visible to the relay (handles in contact,
 timing, and the size bucket) is documented here and surfaced honestly in the app. The
@@ -66,12 +76,22 @@ integer `ts` for compatibility.
 
 ## Identity and handles
 
-Each install generates a long term identity key pair, a registration id, and one signed
-prekey. A routing handle is a public, opaque, app generated id used only for delivery. The
-QR contact card (v3) encodes public data only: the handle, the base64 identity public key,
-the registration id, the signed prekey (key id, public key, and its signature by the
-identity key), a human readable fingerprint, a display name, and optionally the owner's
-resolved relay ws(s) URL (`server`, since card v3). It never encodes a private key.
+Each install generates a long term identity key pair, a registration id, one signed
+elliptic curve prekey, and one signed Kyber (ML-KEM-1024) prekey. A routing handle is a
+public, opaque, app generated id used only for delivery. The QR contact card (v4) encodes
+public data only: the handle, the identity public key, the registration id, the signed
+prekey and the signed Kyber prekey (each: key id, public key, and its signature by the
+identity key), a display name, and optionally the owner's resolved relay ws(s) URL
+(`server`, since card v3). It never encodes a private key.
+
+On the wire the v4 card is a fixed position CBOR array (definite lengths, canonical
+minimal integer encodings), base45 encoded (RFC 9285) and prefixed with `NC4:`, so the
+whole card rides a single QR code in alphanumeric mode. The array layout, the exact
+field lengths (identity and curve prekeys 33 bytes, Kyber prekey 1569 bytes, signatures
+64 bytes), and the strict decode rules live in `src/card-codec.ts`; a decoder rejects
+anything that does not re-encode byte identically. v1 to v3 cards were JSON; a v4
+scanner rejects them as incompatible (the peer must update), which is acceptable because
+major 3 is a breaking cut.
 
 Handles are namespaced per relay, so two people on different relays cannot message each
 other. The `server` field exists so the scanning app can detect that at scan time and
@@ -79,12 +99,12 @@ warn instead of failing later. It is optional and best effort: v1/v2 cards lack 
 scanner treats a malformed value as absent, and the field never participates in the
 `cardHash` (display name aside, only immutable identity fields do).
 
-The card is the ONLY channel that distributes the signed prekey; the relay never stores or
-serves key material beyond the transport auth key. Scanning a card therefore lets the
-scanner run X3DH entirely offline, and possessing a peer's signed prekey proves their card
-was scanned (an initiator's own signed prekey never appears in the X3DH handshake). To
+The card is the ONLY channel that distributes the signed prekeys; the relay never stores
+or serves key material beyond the transport auth key. Scanning a card therefore lets the
+scanner run PQXDH entirely offline, and possessing a peer's signed prekeys proves their
+card was scanned (an initiator's own prekeys never appear in the PQXDH handshake). To
 avoid establishing two racing sessions when both people scan each other, exactly one side
-initiates: the peer whose raw identity key compares byte wise smaller runs X3DH from the
+initiates: the peer whose raw identity key compares byte wise smaller runs PQXDH from the
 scanned card; the other side never initiates and becomes the responder when the
 initiator's first sealed message (a `prekey` envelope) arrives.
 
@@ -257,10 +277,12 @@ peer to peer contract; the relay sees none of it.
 
 - `verify/confirm` carries `cardHash`, computed over the RECEIVER's card:
   base64(sha256(utf8(handle) || 0x00 || identityKeyBytes || 0x00 ||
-  signedPreKeyPublicBytes)). Only immutable card fields participate (displayName may
-  change). Because the signed prekey distributes only via the QR card, a correct hash
-  proves the sender held the receiver's card. The receiver recomputes the hash over its
-  own card and silently ignores the message on mismatch.
+  signedPreKeyPublicBytes || 0x00 || kyberPreKeyPublicBytes)). Only immutable card
+  fields participate (displayName may change). Since 3.0 the hash also commits to the
+  Kyber prekey; the pre 3.0 hash omitted the last term. Because the signed prekeys
+  distribute only via the QR card, a correct hash proves the sender held the receiver's
+  card. The receiver recomputes the hash over its own card and silently ignores the
+  message on mismatch.
 - Sending rules, all idempotent: a client sends its confirm when its user confirms the SAS
   (deferred until a session exists for a responder), replies with its own confirm when an
   incoming confirm first flips the peer to confirmed, and resends on reconnect while its
