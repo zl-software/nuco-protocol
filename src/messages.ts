@@ -13,7 +13,20 @@ export interface PushRegistration {
   readonly token?: string; // APNs hex device token
   readonly endpoint?: string; // UnifiedPush endpoint URL
   readonly apnsTopic?: string; // iOS bundle id used as the apns-topic header
+  // PushKit VoIP device token (since 3.1, apns only). When present, an offline
+  // recipient's envelope sent with wake 'voip' triggers a VoIP push (topic
+  // '<apnsTopic>.voip'), which iOS requires the app to report as an incoming call.
+  readonly voipToken?: string;
 }
+
+// How an OFFLINE recipient should be woken for an envelope (since 3.1). The envelope is
+// sealed, so the relay cannot classify it; the sender declares the wake class instead:
+// 'alert' (default; the visible content free banner), 'voip' (an incoming call; only
+// meaningful with a registered voipToken, falls back to 'alert' without one), and 'none'
+// (invisible control traffic like verification confirms, call teardown, or profile
+// syncs; queued for the next connect with no wake at all). This leaks one coarse bit of
+// traffic class to the relay; a relay already infers calls from TURN credential mints.
+export type WakeHint = 'alert' | 'voip' | 'none';
 
 // The Signal message type carried inside an envelope.
 export type CipherMessageType = 'prekey' | 'whisper';
@@ -73,6 +86,7 @@ export interface SendMsg {
   readonly rid: string;
   readonly to: string; // recipient handle
   readonly envelope: MessageEnvelope;
+  readonly wake?: WakeHint; // how to wake an offline recipient (since 3.1); default 'alert'
 }
 
 export interface AckMsg {

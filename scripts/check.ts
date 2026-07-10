@@ -36,6 +36,7 @@ import {
   SIGNED_PREKEY_PUB_LEN,
   KYBER_PREKEY_PUB_LEN,
   PREKEY_SIGNATURE_LEN,
+  parseClientMessage,
   type ContactCard,
   type MessageContent,
 } from '../src/index.js';
@@ -264,6 +265,41 @@ expectInDoc('the QR prefix', CARD_QR_PREFIX);
 expectInDoc('the kyber prekey length', String(KYBER_PREKEY_PUB_LEN));
 expectInDoc('base45', 'base45');
 expectInDoc('PQXDH', 'PQXDH');
+
+// 15. The 3.1 wake hint validates: every hint passes, an unknown one is malformed, and
+// the hint is optional. The voip push token registers.
+const baseSend = {
+  type: 'send',
+  rid: 'r1',
+  to: 'bob',
+  envelope: { id: 'e1', ciphertext: 'AAAA', messageType: 'whisper', sentAt: 1 },
+};
+for (const wake of ['alert', 'voip', 'none']) {
+  const parsed = parseClientMessage(JSON.stringify({ ...baseSend, wake }));
+  if (!parsed.ok || (parsed.message.type === 'send' && parsed.message.wake !== wake)) {
+    failures.push(`send with wake ${wake} did not validate`);
+  }
+}
+if (!parseClientMessage(JSON.stringify(baseSend)).ok) {
+  failures.push('send without a wake hint did not validate');
+}
+if (parseClientMessage(JSON.stringify({ ...baseSend, wake: 'loud' })).ok) {
+  failures.push('send with an unknown wake hint was accepted');
+}
+const voipRegister = parseClientMessage(
+  JSON.stringify({
+    type: 'register',
+    rid: 'r2',
+    authKey: 'AAAA',
+    deviceId: 1,
+    push: { kind: 'apns', token: 'tok', apnsTopic: 'com.example.app', voipToken: 'voiptok' },
+  }),
+);
+if (!voipRegister.ok || (voipRegister.message.type === 'register' && voipRegister.message.push.voipToken !== 'voiptok')) {
+  failures.push('register with a voip token did not validate');
+}
+expectInDoc('the wake hint', '`voip`');
+expectInDoc('the voip token', 'voipToken');
 
 if (failures.length > 0) {
   console.error('protocol check FAILED:');

@@ -4,7 +4,7 @@ This document and the typed sources in `src/` are the single source of truth for
 the Nuco app and the Nuco relay talk. The drift checker (`npm run check`) fails if this
 document falls out of sync with the types.
 
-Protocol version: 3.0
+Protocol version: 3.1
 
 The version is `major.minor`. The relay rejects any connection whose MAJOR version does
 not match its own. A higher MINOR is backward compatible: unknown optional fields are
@@ -20,7 +20,16 @@ prekey, and the QR contact card (v4) carries it; because the Kyber public key is
 raw bytes, the card moved from JSON to a binary CBOR payload in base45 with the `NC4:`
 prefix (see "Identity and handles"), and the derivable `fingerprint` field was dropped.
 The verification `cardHash` now also commits to the Kyber prekey. No transport frames
-changed; the relay still never sees any Signal key material.
+changed; the relay still never sees any Signal key material. Minor 1 added the optional
+`wake` hint on `send` and the optional `voipToken` on the push registration (see
+"Delivery semantics"): the sender classifies how an offline recipient is woken, because
+the sealed envelope gives the relay nothing to classify. `alert` (the default and the
+pre 3.1 behavior) is the visible content free banner, `voip` is an incoming call wake
+(iOS PushKit; the app reports it as an incoming call, falls back to `alert` when no
+voipToken is registered), and `none` is invisible control traffic (verification
+confirms, call teardown, profile syncs) that queues silently for the next connect. The
+hint leaks one coarse traffic class bit to the relay; a relay already infers calls from
+TURN credential mints, and misuse degrades only the sender's own notifications.
 
 Major 2 is a breaking cut. The relay stores and serves no prekeys: the `publishPreKeys`,
 `fetchPreKeyBundle`, and `preKeyCount` client frames and the `preKeyBundle` and
@@ -175,12 +184,13 @@ handle or relay involved.
   challenge nonce).
 - `register`: create or update a device record. Fields: rid, authKey (base64 Ed25519
   public, used to authenticate the socket), deviceId, push (kind plus opaque token or
-  endpoint plus apnsTopic), and optionally attestation (kind, keyId, data; see "App
-  attestation"). Updating an existing handle requires an authenticated socket. Replies
-  `ok`.
+  endpoint plus apnsTopic plus, since 3.1, an optional voipToken for iOS call wakes),
+  and optionally attestation (kind, keyId, data; see "App attestation"). Updating an
+  existing handle requires an authenticated socket. Replies `ok`.
 - `send`: enqueue a sealed message for a recipient. Fields: rid, to (recipient handle),
-  envelope (id, ciphertext, messageType, sentAt). Replies `ok`. Oversized payloads yield
-  MESSAGE_TOO_LARGE; a full recipient queue yields QUEUE_FULL.
+  envelope (id, ciphertext, messageType, sentAt), and since 3.1 an optional wake hint
+  (`alert` | `voip` | `none`, default `alert`; see "Delivery semantics"). Replies `ok`.
+  Oversized payloads yield MESSAGE_TOO_LARGE; a full recipient queue yields QUEUE_FULL.
 - `ack`: confirm a delivered message has been durably stored. Fields: id. The relay then
   deletes that queued message.
 - `ping`: heartbeat. Fields: ts. Replies `pong`.
@@ -377,10 +387,15 @@ The relay stores sealed messages per recipient with a queue size cap and a time 
 When the recipient has a live authenticated socket, queued and live messages are pushed as
 `deliver` frames with an increasing seq. The client acks each by id; the relay deletes on
 ack and dedupes by id, so delivery is at least once. When the recipient has no live socket,
-the relay triggers a content free push (APNs or UnifiedPush) instead. The push never
-carries message content or sender identity: on APNs it is a visible generic notification
-whose text is a fixed localization key resolved on the device, on UnifiedPush an opaque
-wake body.
+the sender's wake hint decides what happens (since 3.1): `alert` (the default) triggers a
+content free push (APNs or UnifiedPush), `voip` triggers an iOS PushKit VoIP push against
+the registered voipToken with a short expiry matched to the ring window (falling back to
+`alert` when no voipToken is registered; on UnifiedPush it degrades to the ordinary wake),
+and `none` queues the envelope silently until the next connect. No push ever carries
+message content or sender identity: on APNs the alert wake is a visible generic
+notification whose text is a fixed localization key resolved on the device, the voip wake
+is an empty payload the app must present as a generic incoming call, and on UnifiedPush it
+is an opaque wake body.
 
 ## Error codes
 

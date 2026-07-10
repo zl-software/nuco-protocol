@@ -9,6 +9,7 @@ import type {
   PushKind,
   CipherMessageType,
   RegisterAttestation,
+  WakeHint,
 } from './messages.js';
 import { ErrorCode } from './errors.js';
 
@@ -64,7 +65,13 @@ function isPushRegistration(v: unknown): v is PushRegistration {
   if (v.token !== undefined && !(isStr(v.token) && v.token.length <= LIMITS.pushTokenMaxLen)) return false;
   if (v.endpoint !== undefined && !(isStr(v.endpoint) && v.endpoint.length <= LIMITS.pushTokenMaxLen)) return false;
   if (v.apnsTopic !== undefined && !(isStr(v.apnsTopic) && v.apnsTopic.length <= LIMITS.apnsTopicMaxLen)) return false;
+  if (v.voipToken !== undefined && !(isStr(v.voipToken) && v.voipToken.length <= LIMITS.pushTokenMaxLen)) return false;
   return true;
+}
+
+const WAKE_HINTS: readonly WakeHint[] = ['alert', 'voip', 'none'];
+function isWakeHint(v: unknown): v is WakeHint {
+  return isStr(v) && WAKE_HINTS.includes(v as WakeHint);
 }
 
 // Shape check only. The kind is not restricted to known values here so a future
@@ -144,7 +151,17 @@ export function parseClientMessage(raw: string): ParseResult {
       if (!isRid(v.rid)) return MALFORMED;
       if (!isHandle(v.to)) return MALFORMED;
       if (!isEnvelope(v.envelope)) return MALFORMED;
-      return { ok: true, message: { type: 'send', rid: v.rid, to: v.to, envelope: v.envelope } };
+      if (v.wake !== undefined && !isWakeHint(v.wake)) return MALFORMED;
+      return {
+        ok: true,
+        message: {
+          type: 'send',
+          rid: v.rid,
+          to: v.to,
+          envelope: v.envelope,
+          ...(v.wake !== undefined ? { wake: v.wake } : {}),
+        },
+      };
     }
     case 'ack': {
       if (!isNonEmptyStr(v.id) || v.id.length > LIMITS.idMaxLen) return MALFORMED;
