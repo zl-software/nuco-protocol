@@ -10,6 +10,8 @@ import type {
   CipherMessageType,
   RegisterAttestation,
   WakeHint,
+  ReportCategory,
+  ReportContext,
 } from './messages.js';
 import { ErrorCode } from './errors.js';
 
@@ -42,6 +44,7 @@ export const LIMITS = {
   attestKindMaxLen: 32,
   attestKeyIdB64MaxLen: 64, // App Attest key ids are 44 chars of base64
   attestationB64MaxLen: 24576, // real attestation objects are ~7.5 KB of base64
+  reportCommentMaxLen: 500,
 } as const;
 
 function isHandle(v: unknown): v is string {
@@ -72,6 +75,15 @@ function isPushRegistration(v: unknown): v is PushRegistration {
 const WAKE_HINTS: readonly WakeHint[] = ['alert', 'voip', 'none'];
 function isWakeHint(v: unknown): v is WakeHint {
   return isStr(v) && WAKE_HINTS.includes(v as WakeHint);
+}
+
+export const REPORT_CATEGORIES: readonly ReportCategory[] = ['spam', 'harassment', 'illegal', 'other'];
+export const REPORT_CONTEXTS: readonly ReportContext[] = ['contact', 'message'];
+function isReportCategory(v: unknown): v is ReportCategory {
+  return isStr(v) && REPORT_CATEGORIES.includes(v as ReportCategory);
+}
+function isReportContext(v: unknown): v is ReportContext {
+  return isStr(v) && REPORT_CONTEXTS.includes(v as ReportContext);
 }
 
 // Shape check only. The kind is not restricted to known values here so a future
@@ -178,6 +190,24 @@ export function parseClientMessage(raw: string): ParseResult {
     case 'turnCredentials': {
       if (!isRid(v.rid)) return MALFORMED;
       return { ok: true, message: { type: 'turnCredentials', rid: v.rid } };
+    }
+    case 'report': {
+      if (!isRid(v.rid)) return MALFORMED;
+      if (!isHandle(v.handle)) return MALFORMED;
+      if (!isReportCategory(v.category)) return MALFORMED;
+      if (v.comment !== undefined && !(isNonEmptyStr(v.comment) && v.comment.length <= LIMITS.reportCommentMaxLen)) return MALFORMED;
+      if (v.context !== undefined && !isReportContext(v.context)) return MALFORMED;
+      return {
+        ok: true,
+        message: {
+          type: 'report',
+          rid: v.rid,
+          handle: v.handle,
+          category: v.category,
+          ...(v.comment !== undefined ? { comment: v.comment } : {}),
+          ...(v.context !== undefined ? { context: v.context } : {}),
+        },
+      };
     }
     default:
       return MALFORMED;

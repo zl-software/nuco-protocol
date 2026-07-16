@@ -4,7 +4,7 @@ This document and the typed sources in `src/` are the single source of truth for
 the Nuco app and the Nuco relay talk. The drift checker (`npm run check`) fails if this
 document falls out of sync with the types.
 
-Protocol version: 3.1
+Protocol version: 3.2
 
 The version is `major.minor`. The relay rejects any connection whose MAJOR version does
 not match its own. A higher MINOR is backward compatible: unknown optional fields are
@@ -29,7 +29,9 @@ pre 3.1 behavior) is the visible content free banner, `voip` is an incoming call
 voipToken is registered), and `none` is invisible control traffic (verification
 confirms, call teardown, profile syncs) that queues silently for the next connect. The
 hint leaks one coarse traffic class bit to the relay; a relay already infers calls from
-TURN credential mints, and misuse degrades only the sender's own notifications.
+TURN credential mints, and misuse degrades only the sender's own notifications. Minor 2
+added the `report` frame (flag a handle to the relay operator, never carrying message
+content) plus the BANNED and REPORT_REJECTED error codes (see "Reports and bans").
 
 Major 2 is a breaking cut. The relay stores and serves no prekeys: the `publishPreKeys`,
 `fetchPreKeyBundle`, and `preKeyCount` client frames and the `preKeyBundle` and
@@ -199,6 +201,12 @@ handle or relay involved.
 - `turnCredentials`: request short lived TURN relay credentials for a voice call. Fields:
   rid. Requires an authenticated socket. Replies `turnCredentialsResult`; a relay without
   TURN configured replies error CALLS_UNAVAILABLE.
+- `report` (since 3.2): flag another handle to the relay operator. Fields: rid, handle
+  (the reported handle), category (`spam` | `harassment` | `illegal` | `other`), optional
+  comment (bounded freetext), optional context (`contact` | `message`, informational
+  only). Requires an authenticated socket. Replies `ok`; a rejected report (self report,
+  storage cap) replies error REPORT_REJECTED. A report NEVER carries message content
+  (see "Reports and bans").
 
 ## Server to client messages
 
@@ -397,6 +405,26 @@ notification whose text is a fixed localization key resolved on the device, the 
 is an empty payload the app must present as a generic incoming call, and on UnifiedPush it
 is an opaque wake body.
 
+## Reports and bans
+
+Since 3.2 a client can flag another handle to the relay operator with the `report` frame.
+Everything between peers is end to end encrypted, so a report is policy input the
+operator cannot verify, and it deliberately carries NO message content: only the reported
+handle, a category, an optional short comment, and an optional context marker. Sending a
+report reveals the reporter to reported pair to the operator; that disclosure is the
+reporter's deliberate choice, and it is the only time the protocol ever asks the relay to
+remember a relationship between two handles.
+
+How the operator acts on reports is relay policy (the reference relay commits to acting
+within 24 hours). The enforcement primitive is a ban: a banned handle fails
+`authenticate` and `register` with error BANNED, so it can neither connect nor
+re-register, and its queued messages are dropped. On `authenticate` the BANNED answer is
+only ever sent AFTER the auth signature verifies, and probing a banned handle's
+`register` while it has a device record answers UNAUTHENTICATED like any other handle,
+so merely knowing a handle does not reveal its ban status. A `send` to a banned handle
+answers NO_SUCH_HANDLE, making a banned recipient indistinguishable from a deleted
+account by design.
+
 ## Error codes
 
 The relay never sends human readable text. It sends one of these stable codes, which the
@@ -415,6 +443,10 @@ app maps to a localized string:
 - QUEUE_FULL: the recipient queue is at capacity.
 - MESSAGE_TOO_LARGE: the envelope exceeded the maximum allowed size.
 - CALLS_UNAVAILABLE: the relay has no TURN server configured, so voice calls cannot connect.
+- BANNED: this handle was banned by the relay operator; authenticate and register are
+  refused (see "Reports and bans" for when the code is disclosed).
+- REPORT_REJECTED: the relay did not accept this report (self report, or the report
+  store is at capacity).
 - INTERNAL: an unexpected relay error.
 
 ## What the relay can and cannot see
@@ -424,5 +456,7 @@ identity key or prekey (since 2.0 the relay holds no end to end key material at 
 the transport auth public key), the result of any decryption.
 
 Can see: which handles exchange messages, timing, message counts, padded size buckets, and
-the opaque push token or endpoint needed to send a wake. Operators should run the relay
-with this in mind, and the app states it plainly on the About and Privacy screen.
+the opaque push token or endpoint needed to send a wake. When a user chooses to send a
+report (since 3.2), the operator additionally learns the reporter to reported pair, the
+category, and the optional comment; nothing more, and only then. Operators should run the
+relay with this in mind, and the app states it plainly on the About and Privacy screen.

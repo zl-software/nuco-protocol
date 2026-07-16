@@ -113,6 +113,28 @@ export interface TurnCredentialsMsg {
   readonly rid: string;
 }
 
+// What a report accuses the reported handle of (since 3.2).
+export type ReportCategory = 'spam' | 'harassment' | 'illegal' | 'other';
+
+// Where the reporter flagged from: the contact as a whole or a specific message. Purely
+// informational for the operator; no message is referenced, let alone carried.
+export type ReportContext = 'contact' | 'message';
+
+// Flag another handle to the relay operator (since 3.2). Requires an authenticated
+// socket; the reply is a plain ok. A report NEVER carries message content: everything is
+// end to end encrypted, so there is nothing the relay could verify anyway. The report is
+// policy input for the operator, who can ban the reported handle (see "Reports and bans"
+// in PROTOCOL.md). Sending one reveals the reporter -> reported pair to the operator;
+// that disclosure is the reporter's deliberate choice.
+export interface ReportMsg {
+  readonly type: 'report';
+  readonly rid: string;
+  readonly handle: string; // the reported handle
+  readonly category: ReportCategory;
+  readonly comment?: string; // optional freetext, bounded by LIMITS.reportCommentMaxLen
+  readonly context?: ReportContext;
+}
+
 export type ClientMessage =
   | ConnectMsg
   | AuthenticateMsg
@@ -121,7 +143,8 @@ export type ClientMessage =
   | AckMsg
   | PingMsg
   | DeregisterMsg
-  | TurnCredentialsMsg;
+  | TurnCredentialsMsg
+  | ReportMsg;
 
 export type ClientMessageType = ClientMessage['type'];
 
@@ -204,6 +227,7 @@ const CLIENT_MESSAGE_TYPE_MAP: Record<ClientMessageType, true> = {
   ping: true,
   deregister: true,
   turnCredentials: true,
+  report: true,
 };
 
 const SERVER_MESSAGE_TYPE_MAP: Record<ServerMessageType, true> = {

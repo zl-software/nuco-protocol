@@ -37,6 +37,9 @@ import {
   KYBER_PREKEY_PUB_LEN,
   PREKEY_SIGNATURE_LEN,
   parseClientMessage,
+  REPORT_CATEGORIES,
+  REPORT_CONTEXTS,
+  LIMITS,
   type ContactCard,
   type MessageContent,
 } from '../src/index.js';
@@ -300,6 +303,49 @@ if (!voipRegister.ok || (voipRegister.message.type === 'register' && voipRegiste
 }
 expectInDoc('the wake hint', '`voip`');
 expectInDoc('the voip token', 'voipToken');
+
+// 16. The 3.2 report frame validates: every category passes, comment and context are
+// optional, and unknown categories, unknown contexts, oversized comments, and empty
+// comments are malformed.
+const baseReport = { type: 'report', rid: 'r3', handle: 'mallory' };
+for (const category of REPORT_CATEGORIES) {
+  const parsed = parseClientMessage(JSON.stringify({ ...baseReport, category }));
+  if (!parsed.ok || (parsed.message.type === 'report' && parsed.message.category !== category)) {
+    failures.push(`report with category ${category} did not validate`);
+  }
+}
+for (const context of REPORT_CONTEXTS) {
+  if (!parseClientMessage(JSON.stringify({ ...baseReport, category: 'spam', context })).ok) {
+    failures.push(`report with context ${context} did not validate`);
+  }
+}
+const fullReport = parseClientMessage(
+  JSON.stringify({ ...baseReport, category: 'harassment', comment: 'sent unsolicited ads', context: 'message' }),
+);
+if (!fullReport.ok || (fullReport.message.type === 'report' && fullReport.message.comment !== 'sent unsolicited ads')) {
+  failures.push('report with a comment did not validate');
+}
+if (parseClientMessage(JSON.stringify({ ...baseReport, category: 'rude' })).ok) {
+  failures.push('report with an unknown category was accepted');
+}
+if (parseClientMessage(JSON.stringify({ ...baseReport, category: 'spam', context: 'group' })).ok) {
+  failures.push('report with an unknown context was accepted');
+}
+if (parseClientMessage(JSON.stringify({ ...baseReport, category: 'spam', comment: '' })).ok) {
+  failures.push('report with an empty comment was accepted');
+}
+if (
+  parseClientMessage(
+    JSON.stringify({ ...baseReport, category: 'spam', comment: 'x'.repeat(LIMITS.reportCommentMaxLen + 1) }),
+  ).ok
+) {
+  failures.push('report with an oversized comment was accepted');
+}
+if (parseClientMessage(JSON.stringify(baseReport)).ok) {
+  failures.push('report without a category was accepted');
+}
+expectInDoc('the report frame', '`report`');
+expectInDoc('the report category', '`harassment`');
 
 if (failures.length > 0) {
   console.error('protocol check FAILED:');
