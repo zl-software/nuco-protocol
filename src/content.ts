@@ -37,7 +37,19 @@ export type MessageContent =
   | { readonly t: 'call/end'; readonly callId: string; readonly reason: CallEndReason | (string & {}) }
   | { readonly t: 'verify/confirm'; readonly cardHash: string } // mutual verification proof, see below
   | { readonly t: 'message/delete'; readonly id: string } // retract a text the sender authored, see below
-  | { readonly t: 'profile/name'; readonly name: string }; // the sender's new display name, see below
+  | { readonly t: 'profile/name'; readonly name: string } // the sender's new display name, see below
+  | {
+      // Announces an image (since 3.3), see the image block below. This content's envelope
+      // id doubles as the image's message id on both peers, exactly like a text's id.
+      readonly t: 'image';
+      readonly mime: string; // strictly image/jpeg for now
+      readonly width: number; // pixel dimensions of the encoded image
+      readonly height: number;
+      readonly bytes: number; // total raw (pre base64) image size
+      readonly sha256: string; // base64 sha256 digest of the raw image bytes
+      readonly chunks: number; // count of image/chunk parts that follow
+    }
+  | { readonly t: 'image/chunk'; readonly ref: string; readonly seq: number; readonly data: string }; // one base64 slice of the image named by ref
 
 export type MessageContentType = MessageContent['t'];
 
@@ -58,6 +70,32 @@ export const RETENTION_MAX_SECONDS = 365 * 24 * 60 * 60;
 // protection: the receiver removes the row only if the requesting peer authored it, and a
 // pre 2.3 peer drops the request as unknown content and keeps its copy.
 export const MESSAGE_ID_MAX_LEN = 64;
+
+// Images (since 3.3). An image travels as one `image` announcement followed by `chunks`
+// `image/chunk` parts, all ordinary sealed envelopes, so the relay learns nothing new and
+// no transport frame changes. The announcement's envelope id doubles as the image's
+// message id on both peers (see the message reference block above); each chunk names it
+// via `ref`. Chunk geometry is fixed: IMAGE_CHUNK_RAW_BYTES is divisible by 3, so every
+// chunk except the last carries exactly IMAGE_CHUNK_DATA_B64_MAX base64 characters with
+// no '=' padding. A sender may slice a base64 body directly, a receiver reassembles by
+// plain concatenation, and every slice decodes on its own for incremental hashing. The
+// cap keeps a maximal chunk's JSON encoding (worst case field overhead is about 110
+// bytes) inside the 65536 padding bucket after the 4 byte length prefix, whose sealed
+// ciphertext stays under the relay's default MAX_MESSAGE_BYTES (the drift check asserts
+// the budget). The receiver persists each chunk before acking its envelope, assembles
+// once all chunks arrived, verifies `sha256` over the raw image bytes, and discards the
+// whole transfer on any mismatch. `chunks` must equal ceil(bytes / IMAGE_CHUNK_RAW_BYTES),
+// which also bounds it to IMAGE_MAX_CHUNKS. `mime` is strictly image/jpeg for now; a
+// future format is a later minor and decodes as unknown on a 3.3 peer. A pre 3.3 peer
+// drops both variants as unknown content and the sender cannot detect that (there is no
+// capability discovery), the standard limitation of every content addition.
+export const IMAGE_CHUNK_RAW_BYTES = 48000;
+export const IMAGE_CHUNK_DATA_B64_MAX = 64000; // IMAGE_CHUNK_RAW_BYTES / 3 * 4
+export const IMAGE_MAX_CHUNKS = 64; // keeps seq at two digits, see the check.ts budget
+export const IMAGE_MAX_BYTES = IMAGE_MAX_CHUNKS * IMAGE_CHUNK_RAW_BYTES; // 3072000
+export const IMAGE_SHA256_B64_LEN = 44; // a sha256 digest in base64, like CARD_HASH_LEN
+export const IMAGE_MAX_DIM = 8192;
+export const IMAGE_MIME_JPEG = 'image/jpeg';
 
 // Voice call signaling bounds and shared timing. The sdp cap is a safety ceiling well above
 // an audio only, relay only offer or answer (roughly 1 to 3 KB, which pads into the 4096
@@ -121,6 +159,8 @@ const MESSAGE_CONTENT_TYPE_MAP: Record<MessageContentType, true> = {
   'verify/confirm': true,
   'message/delete': true,
   'profile/name': true,
+  image: true,
+  'image/chunk': true,
 };
 
 export const MESSAGE_CONTENT_TYPES = Object.keys(MESSAGE_CONTENT_TYPE_MAP) as MessageContentType[];
@@ -220,9 +260,44 @@ function isMessageContent(v: unknown): v is MessageContent {
       return isMessageId(o.id);
     case 'profile/name':
       return typeof o.name === 'string' && o.name.length > 0 && o.name.length <= NAME_MAX_LEN;
+    case 'image':
+      // The chunks consistency rule also bounds chunks to 1..IMAGE_MAX_CHUNKS via bytes.
+      return (
+        o.mime === IMAGE_MIME_JPEG &&
+        isPixelDim(o.width) &&
+        isPixelDim(o.height) &&
+        typeof o.bytes === 'number' &&
+        Number.isInteger(o.bytes) &&
+        o.bytes >= 1 &&
+        o.bytes <= IMAGE_MAX_BYTES &&
+        typeof o.sha256 === 'string' &&
+        o.sha256.length === IMAGE_SHA256_B64_LEN &&
+        o.chunks === Math.ceil(o.bytes / IMAGE_CHUNK_RAW_BYTES)
+      );
+    case 'image/chunk':
+      return (
+        isMessageId(o.ref) &&
+        typeof o.seq === 'number' &&
+        Number.isInteger(o.seq) &&
+        o.seq >= 0 &&
+        o.seq < IMAGE_MAX_CHUNKS &&
+        typeof o.data === 'string' &&
+        o.data.length > 0 &&
+        o.data.length <= IMAGE_CHUNK_DATA_B64_MAX &&
+        o.data.length % 4 === 0 &&
+        CONTENT_BASE64_RE.test(o.data)
+      );
     default:
       return false;
   }
+}
+
+// Standard base64 with padding, matching the transport validator's rule: length a multiple
+// of 4 (checked by the caller), only the base64 alphabet, at most two trailing '='.
+const CONTENT_BASE64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
+
+function isPixelDim(v: unknown): v is number {
+  return typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= IMAGE_MAX_DIM;
 }
 
 function isMessageId(v: unknown): v is string {

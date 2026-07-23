@@ -6,7 +6,7 @@ export interface ProtocolVersion {
   readonly minor: number;
 }
 
-export const PROTOCOL_VERSION: ProtocolVersion = { major: 3, minor: 2 };
+export const PROTOCOL_VERSION: ProtocolVersion = { major: 3, minor: 3 };
 
 export const PROTOCOL_VERSION_STRING = `${PROTOCOL_VERSION.major}.${PROTOCOL_VERSION.minor}`;
 

@@ -22,6 +22,11 @@ import {
   CALL_SDP_MAX_LEN,
   MESSAGE_ID_MAX_LEN,
   NAME_MAX_LEN,
+  IMAGE_CHUNK_RAW_BYTES,
+  IMAGE_CHUNK_DATA_B64_MAX,
+  IMAGE_MAX_CHUNKS,
+  IMAGE_MAX_BYTES,
+  IMAGE_MIME_JPEG,
   base45Encode,
   base45Decode,
   encodeContactCardQr,
@@ -103,6 +108,16 @@ const contentSamples: MessageContent[] = [
   { t: 'call/answer', callId: 'a1b2c3d4-0000-4000-8000-000000000000', sdp: fakeSdp },
   { t: 'call/end', callId: 'a1b2c3d4-0000-4000-8000-000000000000', reason: 'hangup' },
   { t: 'profile/name', name: 'Alice Example' },
+  {
+    t: 'image',
+    mime: IMAGE_MIME_JPEG,
+    width: 1600,
+    height: 1200,
+    bytes: 150000,
+    sha256: fakeB64(32, 3),
+    chunks: 4,
+  },
+  { t: 'image/chunk', ref: 'a1b2c3d4-0000-4000-8000-000000000000', seq: 0, data: 'QUJD' },
 ];
 for (const sample of contentSamples) {
   const decoded = decodeContent(encodeContent(sample));
@@ -346,6 +361,62 @@ if (parseClientMessage(JSON.stringify(baseReport)).ok) {
 }
 expectInDoc('the report frame', '`report`');
 expectInDoc('the report category', '`harassment`');
+
+// 17. The 3.3 image content: the chunk geometry constants are internally consistent, a
+// maximal chunk's JSON encoding fits the 65536 padding bucket (the whole point of the
+// geometry: its sealed ciphertext then stays under the relay's default size limit), and
+// every bound rejects.
+if (IMAGE_CHUNK_DATA_B64_MAX !== (IMAGE_CHUNK_RAW_BYTES / 3) * 4 || IMAGE_CHUNK_RAW_BYTES % 3 !== 0) {
+  failures.push('image chunk base64 and raw sizes are inconsistent');
+}
+if (IMAGE_MAX_BYTES !== IMAGE_MAX_CHUNKS * IMAGE_CHUNK_RAW_BYTES) {
+  failures.push('IMAGE_MAX_BYTES does not equal IMAGE_MAX_CHUNKS * IMAGE_CHUNK_RAW_BYTES');
+}
+const maximalChunk: MessageContent = {
+  t: 'image/chunk',
+  ref: 'r'.repeat(MESSAGE_ID_MAX_LEN),
+  seq: IMAGE_MAX_CHUNKS - 1,
+  data: 'A'.repeat(IMAGE_CHUNK_DATA_B64_MAX),
+};
+const maximalChunkBytes = encodeContent(maximalChunk);
+if (maximalChunkBytes.length > 65532) {
+  failures.push(`maximal image chunk encodes to ${maximalChunkBytes.length} bytes, above the 65532 budget`);
+}
+if (pad(maximalChunkBytes).length !== 65536) {
+  failures.push(`maximal image chunk padded to ${pad(maximalChunkBytes).length}, expected the 65536 bucket`);
+}
+if (decodeContent(maximalChunkBytes).t !== 'image/chunk') {
+  failures.push('maximal image chunk did not decode as image/chunk');
+}
+const goodImageMeta = {
+  t: 'image',
+  mime: IMAGE_MIME_JPEG,
+  width: 1600,
+  height: 1200,
+  bytes: 150000,
+  sha256: fakeB64(32, 3),
+  chunks: 4,
+};
+const goodChunk = { t: 'image/chunk', ref: 'a1b2c3d4', seq: 0, data: 'QUJD' };
+const imageRejects: Array<[string, object]> = [
+  ['a non jpeg mime', { ...goodImageMeta, mime: 'image/png' }],
+  ['a zero width', { ...goodImageMeta, width: 0 }],
+  ['an oversized dimension', { ...goodImageMeta, height: 8193 }],
+  ['an inconsistent chunk count', { ...goodImageMeta, chunks: 3 }],
+  ['an oversized byte count', { ...goodImageMeta, bytes: IMAGE_MAX_BYTES + 1, chunks: IMAGE_MAX_CHUNKS + 1 }],
+  ['a wrong length sha256', { ...goodImageMeta, sha256: fakeB64(32, 3).slice(0, 43) }],
+  ['an oversized chunk data', { ...goodChunk, data: 'A'.repeat(IMAGE_CHUNK_DATA_B64_MAX + 4) }],
+  ['a chunk data length not a multiple of 4', { ...goodChunk, data: 'AAAAA' }],
+  ['a chunk data outside the base64 alphabet', { ...goodChunk, data: 'AA$A' }],
+  ['a chunk seq at the cap', { ...goodChunk, seq: IMAGE_MAX_CHUNKS }],
+  ['an oversized chunk ref', { ...goodChunk, ref: 'r'.repeat(MESSAGE_ID_MAX_LEN + 1) }],
+];
+for (const [label, bad] of imageRejects) {
+  const decoded = decodeContent(encoder.encode(JSON.stringify(bad)));
+  if (decoded.t !== 'unknown') {
+    failures.push(`image content with ${label} decoded as ${decoded.t}, expected unknown`);
+  }
+}
 
 if (failures.length > 0) {
   console.error('protocol check FAILED:');

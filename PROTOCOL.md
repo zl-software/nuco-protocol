@@ -4,7 +4,7 @@ This document and the typed sources in `src/` are the single source of truth for
 the Nuco app and the Nuco relay talk. The drift checker (`npm run check`) fails if this
 document falls out of sync with the types.
 
-Protocol version: 3.2
+Protocol version: 3.3
 
 The version is `major.minor`. The relay rejects any connection whose MAJOR version does
 not match its own. A higher MINOR is backward compatible: unknown optional fields are
@@ -31,7 +31,10 @@ confirms, call teardown, profile syncs) that queues silently for the next connec
 hint leaks one coarse traffic class bit to the relay; a relay already infers calls from
 TURN credential mints, and misuse degrades only the sender's own notifications. Minor 2
 added the `report` frame (flag a handle to the relay operator, never carrying message
-content) plus the BANNED and REPORT_REJECTED error codes (see "Reports and bans").
+content) plus the BANNED and REPORT_REJECTED error codes (see "Reports and bans"). Minor 3
+added the `image` and `image/chunk` content variants (a photo travels as a fixed geometry
+sequence of ordinary sealed envelopes, see "Message content"); no frames changed and the
+relay cannot tell an image apart from any other padded traffic.
 
 Major 2 is a breaking cut. The relay stores and serves no prekeys: the `publishPreKeys`,
 `fetchPreKeyBundle`, and `preKeyCount` client frames and the `preKeyBundle` and
@@ -246,8 +249,11 @@ produced), `call/answer` (accept a pending offer: the same callId plus a complet
 SDP answer), `call/end` (end, decline, or abort the call with that callId, with a short
 `reason` string), `verify/confirm` (the mutual verification proof, see "Mutual
 verification semantics"), `message/delete` (ask the peer to remove the text with that
-envelope id from its device), and `profile/name` (the sender's new display name after a
-rename; the receiver updates its stored contact name).
+envelope id from its device), `profile/name` (the sender's new display name after a
+rename; the receiver updates its stored contact name), `image` (announces a photo: mime,
+pixel dimensions, total raw byte count, a base64 sha256 digest of the raw bytes, and the
+chunk count), and `image/chunk` (one base64 slice of the image named by `ref`, with a 0
+based `seq`).
 
 A text's envelope id doubles as its cross peer identity: the sender uses the same id as
 its local record key and as the envelope id, and the receiver stores the message under
@@ -262,6 +268,29 @@ relay accepts it; receivers treat a repeated unchanged name as a no-op). Applyin
 cooperative client behavior, like deletion. The display name never participates in the
 verification `cardHash`, so a rename cannot break or fake verification; a pre 2.6 peer
 drops the content as unknown and keeps the name from the last scan.
+
+An image travels as one `image` announcement followed by `chunks` `image/chunk` parts,
+all ordinary sealed envelopes on the same channel, so the relay sees only the usual
+padded ciphertext buckets and cannot tell a photo apart from a burst of long texts. The
+announcement's envelope id doubles as the image's message id on both peers (exactly like
+a text's id); each chunk names it via `ref`. Chunk geometry is fixed: a chunk carries at
+most 64000 base64 characters (48000 raw bytes; the raw size is divisible by 3, so every
+chunk except the last is exactly 64000 characters with no `=` padding, a base64 body can
+be sliced directly, and reassembly is plain concatenation). That cap keeps a maximal
+chunk's JSON encoding inside the 65536 padding bucket, whose sealed ciphertext stays
+under the relay's default per message size limit; images therefore need no relay or
+frame changes. An image is at most 64 chunks (3072000 raw bytes), and the announced
+`chunks` must equal ceil(bytes / 48000). Because a mailbox delivers in order, the
+announcement always precedes its chunks. The receiver persists each chunk before acking
+its envelope, assembles once all chunks are present, verifies the announced sha256 over
+the raw image bytes, and silently discards the whole transfer on any mismatch; a chunk
+whose `ref` matches no known transfer is acked and dropped. Senders send the
+announcement with wake hint `alert` and every chunk with `none`, so an offline receiver
+gets one banner per photo. `mime` is strictly `image/jpeg` for now; a future format is a
+later minor. A pre 3.3 peer drops both variants as unknown content, and there is no
+capability discovery, so a sender cannot detect that; clients are expected to strip
+image metadata (EXIF and friends) before encrypting, since the protocol transports the
+encoded image bytes verbatim.
 
 Screenshot protection follows the retention negotiation shape: a change is a request the
 other side accepts before it applies on either device. Once agreed, each client instructs
@@ -285,7 +314,11 @@ truncated), a retention `value` above 365 days (31536000 seconds) is not recogni
 id is capped at 64 units, an SDP payload at 8192 units, a call end reason at 32 units, a
 message id (`message/delete.id` or a `replyTo` reference) at 64 units, a `profile/name`
 name at 64 units (and it must be non empty), and a `cardHash` must be exactly 44
-characters (base64 of a 32 byte sha256 digest).
+characters (base64 of a 32 byte sha256 digest). An `image` must carry mime `image/jpeg`,
+pixel dimensions from 1 to 8192, a byte count from 1 to 3072000, a sha256 of exactly 44
+characters, and a `chunks` count consistent with the byte count; an `image/chunk` must
+carry a `ref` of at most 64 units, a `seq` from 0 to 63, and non empty well formed base64
+`data` of at most 64000 characters. Anything outside these bounds decodes as `unknown`.
 
 ### Mutual verification semantics
 
